@@ -1,0 +1,36 @@
+*.iml
+.gradle
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.idea
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# Gradle files
+.gradle/
+build/
+
+# Local configuration file (sdk.dir)
+local.properties
+
+# Android Studio generated files
+.idea/
+*.iml
+*.ide
+.name
+.navigation/
+
+# Built application files
+*.apk
+*.ap_
+*.aab
+
+# Kotlin
+.kotlin/
