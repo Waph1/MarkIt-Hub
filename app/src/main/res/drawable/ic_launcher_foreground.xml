@@ -4,7 +4,19 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M30,30h48v48h-48z" />
+    <group android:scaleX="0.5" android:scaleY="0.5" android:translateX="27" android:translateY="27">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M12,2L12,22L2,12L12,2ZM22,12L12,22L22,2L12,12ZM2,12L12,2L22,12L12,22Z" />
+        <!-- Simple "Hub" Symbol: A central circle with 4 radiating lines/nodes -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M54,54 m-15,0 a15,15 0 1,0 30,0 a15,15 0 1,0 -30,0" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M54,30 L54,10 M54,78 L54,98 M30,54 L10,54 M78,54 L98,54"
+            android:strokeWidth="8"
+            android:strokeColor="#FFFFFF"
+            android:strokeLineCap="round" />
+    </group>
 </vector>
