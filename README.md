@@ -1,4 +1,4 @@
-# Markdown Calendar App (Android)
+# MarkIt Hub
 
 A calendar app where every event is a Markdown file with YAML frontmatter.
 
