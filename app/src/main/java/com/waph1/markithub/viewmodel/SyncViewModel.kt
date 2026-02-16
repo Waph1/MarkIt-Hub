@@ -120,9 +120,27 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    fun nukeAndReset() {
+        viewModelScope.launch {
+            _syncStatus.value = SyncStatus.Syncing
+            try {
+                syncEngine.wipeAllAppData()
+                addLog("All app data and calendars wiped successfully.")
+                _lastSyncTime.value = null
+                _syncStatus.value = SyncStatus.Idle
+            } catch (e: Exception) {
+                addLog("Nuke failed: ${e.message}")
+                _syncStatus.value = SyncStatus.Idle
+            }
+        }
+    }
     
     fun refreshLogs() {
-        _syncLogs.value = com.waph1.markithub.util.SyncLogger.getLogs(getApplication())
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val logs = com.waph1.markithub.util.SyncLogger.getLogs(getApplication())
+            _syncLogs.value = logs
+        }
     }
 
     fun clearLogs() {

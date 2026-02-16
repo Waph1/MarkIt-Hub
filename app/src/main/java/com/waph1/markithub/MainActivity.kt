@@ -36,27 +36,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(
-                    android.Manifest.permission.POST_NOTIFICATIONS,
-                    android.Manifest.permission.READ_CALENDAR,
-                    android.Manifest.permission.WRITE_CALENDAR
-                ),
-                0
-            )
-        } else {
-             ActivityCompat.requestPermissions(
-                this,
-                arrayOf(
-                    android.Manifest.permission.READ_CALENDAR,
-                    android.Manifest.permission.WRITE_CALENDAR
-                ),
-                0
-            )
-        }
-
         setContent {
             CalendarAppTheme {
                 Surface(
@@ -65,6 +44,9 @@ class MainActivity : ComponentActivity() {
                 ) {
                     val viewModel: SyncViewModel = viewModel()
                     var isLoading by remember { mutableStateOf(true) }
+                    var isSetupCompleted by remember {
+                        mutableStateOf(prefs.getBoolean(KEY_SETUP_COMPLETED, false))
+                    }
 
                     LaunchedEffect(Unit) {
                         val savedUriString = prefs.getString(KEY_ROOT_URI, null)
@@ -117,10 +99,6 @@ class MainActivity : ComponentActivity() {
                             viewModel.setTaskRootUri(it)
                         }
                     }
-                    
-                    var isSetupCompleted by remember {
-                        mutableStateOf(prefs.getBoolean(KEY_SETUP_COMPLETED, false))
-                    }
 
                     when {
                         !isSetupCompleted -> {
@@ -140,6 +118,7 @@ class MainActivity : ComponentActivity() {
                         else -> {
                             SyncDashboardScreen(
                                 viewModel = viewModel,
+                                onSelectRootFolder = { launcher.launch(null) },
                                 onSelectTaskFolder = { taskLauncher.launch(null) }
                             )
                         }

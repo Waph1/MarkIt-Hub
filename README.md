@@ -20,22 +20,45 @@ It integrates deeply with **MarkIt Notes** by scanning your notes for the `remin
 *   **No Cloud Required:** Your data stays in your folders. Use Syncthing, Obsidian, or Dropbox to sync the files to other devices; MarkIt Hub handles the local Android integration.
 *   **Open Format:** Everything is stored in standard Markdown and YAML. You are never locked into a proprietary database.
 
-## Core Features (v0.1.0)
-*   **Onboarding Flow:** Easy setup for permissions (Calendar, Notifications) and Battery Optimization.
-*   **Folder Mapping:** Select your Calendar root and your MarkIt Notes root.
-*   **Background Sync:** Uses WorkManager to keep files and system data in sync even when the app is closed.
+## Core Features (v0.2.0)
+*   **Universal YAML Standard:** Implements a robust, quote-aware YAML structure compatible across the ecosystem.
+    *   **Double-Entry Dates:** Automatically writes both `reminder:` (for MarkIt) and `start:` (for Standard) to ensure compatibility.
+    *   **Smart Quoting:** All strings are safely quoted to handle special characters (e.g., `title: "Project: Kickoff"`).
+    *   **Selective Metadata:** Preserves unknown keys, allowing you to edit notes in other apps without losing calendar links.
+*   **Safe Body Merge:** When you update an event in your Android Calendar, MarkIt Hub **merges** the changes. It updates the metadata (time, title) but **preserves your original Markdown body** on disk, preventing data loss from plain-text calendar apps.
+*   **Task Normalization:** Automatically resizes calendar-created tasks to 10 minutes and ensures the `[]` checklist prefix is applied.
+*   **Sync Stabilization:**
+    *   **State-Based Incremental Sync:** Uses a local database to track file modifications, ensuring correct sync even with Syncthing timestamp quirks.
+    *   **Duplicate ID Protection:** Detects cloned files (copy-paste) and automatically treats them as new events to prevent conflicts.
+    *   **Ghost Calendar Cleanup:** Includes a "Nuke & Reset" tool to wipe stale system data.
+
+## File & YAML Handling
+MarkIt Hub treats your filesystem as the "Source of Truth" for content, and the Android Provider as the "Interface" for scheduling.
+
+### Directory Structure
+*   **Calendars:** Stored in `Root/{CalendarName}/{YYYY}/{MM}/{YYYY-MM-DD}_{Title}.md`.
+*   **Tasks:** Stored in `TaskRoot/Inbox/` (or subfolders). Moving a file to `.Archive` completes the task.
+
+### Universal YAML Format
+We use a flat, human-readable YAML frontmatter.
+```yaml
+---
+color: "#FF5733"
+reminder: "2026-02-15 10:00"  # Authoritative Time
+start: "2026-02-15 10:00"     # Compatibility Mirror
+title: "My Event"
+all_day: false
+system_id: 12345              # Link to Android DB
+---
+
+Markdown content remains untouched...
+```
 
 ## Setup
-1.  **Install:** Download the `MarkIt-Hub-v0.1.0.apk` from the Releases page.
+1.  **Install:** Download the `MarkIt-Hub-v0.2.0.apk` from the Releases page.
 2.  **Permissions:** Follow the onboarding to grant Calendar and Notification access.
 3.  **Battery:** Disable battery optimization (essential for the background sync engine to work reliably).
 4.  **Folders:** Pick the folders where you store your Markdown calendars and MarkIt Notes.
-
-## Roadmap
-- [x] **v0.1.0**: Initial Release. Project scaffolding, Onboarding flow, Placeholder Branding.
-- [ ] **v0.2.0**: Enhanced Sync. Optimized diffing logic and conflict resolution.
-- [ ] **v0.3.0**: Recurring Events. Support for `_Recurring/` master rules and overrides.
-- [ ] **v0.4.0**: Contacts Integration. Parsing vCard/Markdown for system-wide contact syncing.
 
 ---
 *Part of the [MarkIt](https://github.com/Waph1/MarkIt-Hub) productivity suite.*

@@ -10,25 +10,25 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryAlert
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PermMedia
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.waph1.markithub.PREFS_NAME
-import com.waph1.markithub.KEY_ROOT_URI
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.waph1.markithub.viewmodel.SyncViewModel
 
 @Composable
@@ -38,22 +38,6 @@ fun OnboardingScreen(
 ) {
     var currentStep by remember { mutableStateOf(0) }
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    val folderLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri ->
-        uri?.let {
-            context.contentResolver.takePersistableUriPermission(
-                it,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            prefs.edit().putString(KEY_ROOT_URI, it.toString()).apply()
-            viewModel.setRootUri(it)
-            // Automatically move to next step after folder selection
-            currentStep++
-        }
-    }
 
     Column(
         modifier = Modifier
@@ -64,13 +48,9 @@ fun OnboardingScreen(
     ) {
         when (currentStep) {
             0 -> WelcomeStep(onNext = { currentStep++ })
-            1 -> PermissionsStep(context, onNext = { currentStep++ })
+            1 -> PermissionsStep(onNext = { currentStep++ })
             2 -> BatteryOptimizationStep(context, onNext = { currentStep++ })
-            3 -> FolderSelectionStep(
-                onSelectFolder = { folderLauncher.launch(null) },
-                isFolderSelected = viewModel.rootUri.collectAsState().value != null,
-                onFinish = onOnboardingComplete
-            )
+            3 -> ReadyStep(onFinish = onOnboardingComplete)
         }
     }
 }
@@ -96,20 +76,18 @@ fun WelcomeStep(onNext: () -> Unit) {
 }
 
 @Composable
-fun PermissionsStep(context: Context, onNext: () -> Unit) {
+fun PermissionsStep(onNext: () -> Unit) {
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
+    ) { results ->
+        if (results.values.any { it }) {
+            onNext()
+        }
+    }
 
-    Text(
-        text = "Permissions",
-        style = MaterialTheme.typography.headlineMedium
-    )
+    Text(text = "Permissions", style = MaterialTheme.typography.headlineMedium)
     Spacer(modifier = Modifier.height(16.dp))
-    Text(
-        text = "To sync your calendars and send notifications, MarkIt Hub needs access to:",
-        textAlign = TextAlign.Center
-    )
+    Text(text = "To sync your calendars and send notifications, MarkIt Hub needs access to:", textAlign = TextAlign.Center)
     Spacer(modifier = Modifier.height(16.dp))
     
     PermissionItem(icon = Icons.Default.Notifications, text = "Notifications")
@@ -119,10 +97,7 @@ fun PermissionsStep(context: Context, onNext: () -> Unit) {
     
     Button(
         onClick = {
-            val permissions = mutableListOf(
-                Manifest.permission.READ_CALENDAR,
-                Manifest.permission.WRITE_CALENDAR
-            )
+            val permissions = mutableListOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -134,7 +109,6 @@ fun PermissionsStep(context: Context, onNext: () -> Unit) {
     }
     
     Spacer(modifier = Modifier.height(8.dp))
-    
     OutlinedButton(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
         Text("Next")
     }
@@ -152,15 +126,27 @@ fun PermissionItem(icon: ImageVector, text: String) {
 @SuppressLint("BatteryLife")
 @Composable
 fun BatteryOptimizationStep(context: Context, onNext: () -> Unit) {
-    Text(
-        text = "Background Sync",
-        style = MaterialTheme.typography.headlineMedium
-    )
+    val lifecycleOwner = LocalLifecycleOwner.current
+    
+    // Observer to detect when user returns from settings
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (pm.isIgnoringBatteryOptimizations(context.packageName)) {
+                    onNext()
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    Text(text = "Background Sync", style = MaterialTheme.typography.headlineMedium)
     Spacer(modifier = Modifier.height(16.dp))
-    Text(
-        text = "To ensure your calendar stays in sync, please disable battery optimization for MarkIt Hub.",
-        textAlign = TextAlign.Center
-    )
+    Text(text = "To ensure your calendar stays in sync, please disable battery optimization for MarkIt Hub.", textAlign = TextAlign.Center)
     Spacer(modifier = Modifier.height(32.dp))
     
     Button(
@@ -178,46 +164,33 @@ fun BatteryOptimizationStep(context: Context, onNext: () -> Unit) {
     }
     
     Spacer(modifier = Modifier.height(8.dp))
-    
     OutlinedButton(onClick = onNext, modifier = Modifier.fillMaxWidth()) {
         Text("Skip / Next")
     }
 }
 
 @Composable
-fun FolderSelectionStep(
-    onSelectFolder: () -> Unit,
-    isFolderSelected: Boolean,
-    onFinish: () -> Unit
-) {
+fun ReadyStep(onFinish: () -> Unit) {
+    Icon(
+        imageVector = Icons.Default.RocketLaunch,
+        contentDescription = null,
+        modifier = Modifier.size(100.dp),
+        tint = MaterialTheme.colorScheme.primary
+    )
+    Spacer(modifier = Modifier.height(24.dp))
     Text(
-        text = "Select Storage",
-        style = MaterialTheme.typography.headlineMedium
+        text = "You're all set!",
+        style = MaterialTheme.typography.headlineMedium,
+        fontWeight = FontWeight.Bold
     )
     Spacer(modifier = Modifier.height(16.dp))
     Text(
-        text = "Choose the folder where your Markdown calendar files will be stored.",
+        text = "Setup is complete. You can now configure your folders in the dashboard.",
+        style = MaterialTheme.typography.bodyLarge,
         textAlign = TextAlign.Center
     )
     Spacer(modifier = Modifier.height(32.dp))
-    
-    if (isFolderSelected) {
-        Icon(
-            imageVector = Icons.Default.Check,
-            contentDescription = "Selected",
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(48.dp)
-        )
-        Text("Folder Selected!", color = MaterialTheme.colorScheme.primary)
-        Spacer(modifier = Modifier.height(32.dp))
-        Button(onClick = onFinish, modifier = Modifier.fillMaxWidth()) {
-            Text("Finish Setup")
-        }
-    } else {
-        Button(onClick = onSelectFolder, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.Folder, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Select Folder")
-        }
+    Button(onClick = onFinish, modifier = Modifier.fillMaxWidth()) {
+        Text("Go to Dashboard")
     }
 }

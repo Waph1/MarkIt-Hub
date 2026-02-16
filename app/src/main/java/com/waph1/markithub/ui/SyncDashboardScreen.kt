@@ -22,6 +22,7 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun SyncDashboardScreen(
     viewModel: SyncViewModel = viewModel(),
+    onSelectRootFolder: () -> Unit,
     onSelectTaskFolder: () -> Unit
 ) {
     val syncStatus by viewModel.syncStatus.collectAsState()
@@ -62,8 +63,22 @@ fun SyncDashboardScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(text = "Root Folder (Calendars):", style = MaterialTheme.typography.labelMedium)
-                Text(text = rootFolder?.path ?: "Not Selected", style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Root Folder (Calendars):", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            text = rootFolder?.path ?: "Not Selected", 
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    TextButton(onClick = onSelectRootFolder) {
+                        Text(if (rootFolder == null) "Select" else "Change")
+                    }
+                }
                 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -121,6 +136,35 @@ fun SyncDashboardScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Sync Now")
+            }
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            var showNukeDialog by remember { mutableStateOf(false) }
+            
+            OutlinedButton(
+                onClick = { showNukeDialog = true },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+            ) {
+                Text("Nuke & Reset Provider")
+            }
+            
+            if (showNukeDialog) {
+                AlertDialog(
+                    onDismissRequest = { showNukeDialog = false },
+                    title = { Text("Danger Zone") },
+                    text = { Text("This will delete all calendars created by this app in your Android System and clear the sync cache. Your Markdown files will NOT be deleted. Use this to fix sync loops or 'ghost' calendars.") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.nukeAndReset()
+                            showNukeDialog = false
+                        }) { Text("Confirm Nuke") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showNukeDialog = false }) { Text("Cancel") }
+                    }
+                )
             }
         }
 
