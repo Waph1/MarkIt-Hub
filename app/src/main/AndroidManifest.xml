@@ -27,6 +27,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        
+        <receiver android:name=".receiver.SyncReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.waph1.markithub.SYNC" />
+                <action android:name="com.waph1.markithub.EXPORT_LOGS" />
+                <action android:name="com.waph1.markithub.CHECK_CONFIG" />
+                <action android:name="com.waph1.markithub.STOP_SYNC" />
+                <action android:name="com.waph1.markithub.SET_INTERVAL" />
+                <action android:name="com.waph1.markithub.GET_INTERVAL" />
+                <action android:name="com.waph1.markithub.NUKE" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

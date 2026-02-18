@@ -17,6 +17,7 @@ data class CalendarEvent(
     val overrideId: String? = null,
     val body: String = "",
     val fileName: String? = null,
+    val sourceUri: String? = null,
     val calendarName: String = "Default",
     val systemEventId: Long? = null,
     val needsUpdate: Boolean = false,

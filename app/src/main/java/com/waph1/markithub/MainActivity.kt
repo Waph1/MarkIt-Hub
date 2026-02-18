@@ -23,7 +23,7 @@ import com.waph1.markithub.ui.SyncDashboardScreen
 import com.waph1.markithub.ui.theme.CalendarAppTheme
 import com.waph1.markithub.viewmodel.SyncViewModel
 
-const val PREFS_NAME = "CalendarAppPrefs"
+const val PREFS_NAME = "MarkItHubPrefs"
 const val KEY_ROOT_URI = "rootUri"
 const val KEY_TASK_URI = "taskUri"
 const val KEY_LAST_SYNC_TIME = "lastSyncTime"
@@ -103,7 +103,6 @@ class MainActivity : ComponentActivity() {
                     when {
                         !isSetupCompleted -> {
                             OnboardingScreen(
-                                viewModel = viewModel,
                                 onOnboardingComplete = {
                                     prefs.edit().putBoolean(KEY_SETUP_COMPLETED, true).apply()
                                     isSetupCompleted = true

@@ -176,8 +176,13 @@ fun SyncDashboardScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Sync Logs", style = MaterialTheme.typography.titleMedium)
-            TextButton(onClick = { viewModel.clearLogs() }) {
-                Text("Clear")
+            Row {
+                TextButton(onClick = { viewModel.exportLogs() }) {
+                    Text("Export")
+                }
+                TextButton(onClick = { viewModel.clearLogs() }) {
+                    Text("Clear")
+                }
             }
         }
         

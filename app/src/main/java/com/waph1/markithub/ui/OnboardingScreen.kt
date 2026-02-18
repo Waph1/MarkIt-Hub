@@ -33,7 +33,6 @@ import com.waph1.markithub.viewmodel.SyncViewModel
 
 @Composable
 fun OnboardingScreen(
-    viewModel: SyncViewModel,
     onOnboardingComplete: () -> Unit
 ) {
     var currentStep by remember { mutableStateOf(0) }

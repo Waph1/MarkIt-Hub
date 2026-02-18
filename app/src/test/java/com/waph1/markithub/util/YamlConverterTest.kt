@@ -89,13 +89,13 @@ class YamlConverterTest {
 
         val markdown = YamlConverter.toMarkdown(event)
 
-        assertTrue(markdown.contains("title: Another Event"))
+        assertTrue(markdown.contains("title: \"Another Event\""))
         assertTrue(markdown.contains("all_day: true"))
-        assertTrue(markdown.contains("location: Home"))
+        assertTrue(markdown.contains("location: \"Home\""))
         assertTrue(markdown.contains("Event description here."))
         assertTrue(markdown.contains("2023-10-28 14:00"))
-        assertTrue(markdown.contains("reminder: 2023-10-28 14:00")) // MarkIt compatibility
-        assertTrue(markdown.contains("start: 2023-10-28 14:00"))
+        assertTrue(markdown.contains("reminder: \"2023-10-28 14:00\"")) // MarkIt compatibility
+        assertTrue(markdown.contains("start: \"2023-10-28 14:00\""))
     }
 
     @Test
@@ -108,7 +108,7 @@ class YamlConverterTest {
 
         val markdown = YamlConverter.toMarkdown(event)
 
-        assertTrue(markdown.contains("title: Simple Note"))
+        assertTrue(markdown.contains("title: \"Simple Note\""))
         assertFalse(markdown.contains("start:"))
         assertFalse(markdown.contains("reminder:"))
         assertTrue(markdown.contains("Just a note."))

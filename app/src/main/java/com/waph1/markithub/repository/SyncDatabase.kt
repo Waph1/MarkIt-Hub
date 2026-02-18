@@ -30,7 +30,7 @@ interface FileMetadataDao {
     suspend fun deleteByCalendar(calendarName: String)
 }
 
-@Database(entities = [FileMetadata::class], version = 1)
+@Database(entities = [FileMetadata::class], version = 1, exportSchema = false)
 abstract class SyncDatabase : RoomDatabase() {
     abstract fun fileMetadataDao(): FileMetadataDao
 

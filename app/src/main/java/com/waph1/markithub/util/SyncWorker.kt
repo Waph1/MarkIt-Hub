@@ -19,6 +19,7 @@ class SyncWorker(appContext: Context, workerParams: WorkerParameters) :
             val taskUriString = prefs.getString("taskUri", null)
 
             if (rootUriString != null || taskUriString != null) {
+                SyncLogger.log(applicationContext, "Active Folders - Root: $rootUriString, Task: $taskUriString")
                 val engine = SyncEngine(applicationContext)
                 
                 if (rootUriString != null) {

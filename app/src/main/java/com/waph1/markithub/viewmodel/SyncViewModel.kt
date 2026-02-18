@@ -47,7 +47,7 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     val syncInterval: StateFlow<Long> = _syncInterval
 
     private val syncEngine = SyncEngine(application)
-    private val prefs = application.getSharedPreferences("CalendarAppPrefs", Context.MODE_PRIVATE)
+    private val prefs = application.getSharedPreferences(com.waph1.markithub.PREFS_NAME, Context.MODE_PRIVATE)
 
     init {
         val savedInterval = prefs.getLong("syncInterval", 15)
@@ -61,7 +61,7 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
                 .toLocalDateTime()
         }
         
-        scheduleSync(savedInterval)
+        com.waph1.markithub.util.SyncScheduler.schedule(getApplication(), savedInterval)
     }
 
     fun setRootUri(uri: Uri) {
@@ -77,23 +77,12 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     fun setSyncInterval(minutes: Long) {
         _syncInterval.value = minutes
         prefs.edit().putLong("syncInterval", minutes).apply()
-        scheduleSync(minutes)
+        com.waph1.markithub.util.SyncScheduler.schedule(getApplication(), minutes)
         addLog("Sync interval set to ${if (minutes == 0L) "Manual" else "$minutes min"}")
     }
 
     private fun scheduleSync(minutes: Long) {
-        val workManager = WorkManager.getInstance(getApplication())
-        if (minutes > 0) {
-            val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(minutes, TimeUnit.MINUTES)
-                .build()
-            workManager.enqueueUniquePeriodicWork(
-                "CalendarSyncWork",
-                ExistingPeriodicWorkPolicy.UPDATE,
-                syncRequest
-            )
-        } else {
-            workManager.cancelUniqueWork("CalendarSyncWork")
-        }
+        com.waph1.markithub.util.SyncScheduler.schedule(getApplication(), minutes)
     }
 
     fun triggerSync() {
@@ -105,6 +94,7 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _syncStatus.value = SyncStatus.Syncing
             addLog("Starting manual sync...")
+            addLog("Active Folders - Root: ${_rootUri.value}, Task: ${_taskRootUri.value}")
             try {
                 val result = syncEngine.performSync()
                 val now = LocalDateTime.now()
@@ -146,6 +136,13 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     fun clearLogs() {
         com.waph1.markithub.util.SyncLogger.clearLogs(getApplication())
         refreshLogs()
+    }
+
+    fun exportLogs() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            com.waph1.markithub.util.SyncLogger.export(getApplication())
+            addLog("Logs exported to Sync.log in root folder.")
+        }
     }
 
     private fun addLog(message: String) {

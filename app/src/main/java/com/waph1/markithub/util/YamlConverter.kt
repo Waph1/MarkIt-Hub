@@ -1,6 +1,8 @@
 package com.waph1.markithub.util
 
 import com.waph1.markithub.model.CalendarEvent
+import android.content.Context
+import android.net.Uri
 import org.snakeyaml.engine.v2.api.Dump
 import org.snakeyaml.engine.v2.api.DumpSettings
 import org.snakeyaml.engine.v2.api.Load
@@ -26,18 +28,60 @@ object YamlConverter {
         }
     }
 
+    fun hasRequiredMetadata(uri: Uri, context: Context): Boolean {
+        return try {
+            val content = context.contentResolver.openInputStream(uri)?.use { reader -> reader.bufferedReader().readText() } ?: return false
+            val regex = Regex("""^---\s*\n(.*?)\n---\s*""", RegexOption.DOT_MATCHES_ALL)
+            val matchResult = regex.find(content.trim()) ?: return false
+            val yamlContent = matchResult.groups[1]?.value ?: return false
+            
+            // Minimal check: should have reminder/start and title
+            (yamlContent.contains("reminder:") || yamlContent.contains("start:")) && yamlContent.contains("title:")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun parseMarkdown(content: String, fileName: String, calendarName: String): CalendarEvent {
         val regex = Regex("""^---\s*\n(.*?)\n---\s*(?:\n(.*))?$""", RegexOption.DOT_MATCHES_ALL)
         val matchResult = regex.find(content.trim())
 
-        val yamlContent = matchResult?.groups?.get(1)?.value
-        val body = matchResult?.groups?.get(2)?.value?.trim() ?: (if (yamlContent == null) content.trim() else "")
+        var yamlContent = matchResult?.groups?.get(1)?.value
+        var body = if (matchResult != null) {
+            matchResult.groups[2]?.value?.trim() ?: ""
+        } else {
+            content.trim()
+        }
+
+        // Handle case where YAML delimiters are missing but metadata lines exist in body
+        if (yamlContent == null) {
+            val lines = body.lines()
+            val metaLines = mutableListOf<String>()
+            val remainingBody = mutableListOf<String>()
+            val knownKeys = setOf("reminder:", "title:", "all_day:", "location:", "timezone:", "color:", "attendees:", "reminders:", "tags:", "recurrence:", "system_id:", "start:", "end:")
+            
+            var parsingMeta = true
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (parsingMeta && knownKeys.any { trimmed.startsWith(it, ignoreCase = true) }) {
+                    metaLines.add(line)
+                } else {
+                    if (trimmed.isNotEmpty()) parsingMeta = false
+                    remainingBody.add(line)
+                }
+            }
+            
+            if (metaLines.isNotEmpty()) {
+                yamlContent = metaLines.joinToString("\n")
+                body = remainingBody.joinToString("\n").trim()
+            }
+        }
 
         val yamlMap = if (yamlContent != null) {
             try {
                 val loadSettings = LoadSettings.builder().build()
                 val load = Load(loadSettings)
-                (load.loadFromString(yamlContent) as? Map<String, Any>) ?: emptyMap()
+                (load.loadFromString(yamlContent) as? Map<*, *>)?.mapKeys { it.key.toString() } ?: emptyMap()
             } catch (e: Exception) {
                 emptyMap()
             }
@@ -50,27 +94,32 @@ object YamlConverter {
         // Universal 'reminder' key takes precedence
         val dateStr = yamlMap["reminder"]?.toString() ?: yamlMap["start"]?.toString()
         val endStr = yamlMap["end"]?.toString()
-        val allDay = yamlMap["all_day"]?.toString()?.toBoolean() ?: false
-        val location = yamlMap["location"]?.toString()
-        val timezone = yamlMap["timezone"]?.toString()
-        val colorStr = yamlMap["color"]?.toString()
         
-        val attendees = (yamlMap["attendees"] as? List<String>) ?: emptyList()
-        val reminders = (yamlMap["reminders"] as? List<Int>) ?: emptyList()
-
-        val start = parseDateTime(dateStr)
+        var allDay = yamlMap["all_day"]?.toString()?.toBoolean() ?: false
+        
+        val start = if (dateStr != null && dateStr.length <= 10) {
+            allDay = true
+            try { java.time.LocalDate.parse(dateStr).atStartOfDay() } catch (e: Exception) { null }
+        } else parseDateTime(dateStr)
+        
         val end = parseDateTime(endStr)
-
-        val color = colorStr?.let { 
-            try { android.graphics.Color.parseColor(it) } catch (e: Exception) { null } 
-        }
-
+        
+        val location = yamlMap["location"]?.toString()
+                val timezone = yamlMap["timezone"]?.toString()
+                val colorStr = yamlMap["color"]?.toString()
+                
+                val attendees = (yamlMap["attendees"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                val reminders = (yamlMap["reminders"] as? List<*>)?.filterIsInstance<Int>() ?: emptyList()
+        
+                val color = colorStr?.let { 
+                    try { android.graphics.Color.parseColor(it) } catch (e: Exception) { null } 
+                }
         val knownKeys = setOf(
             "title", "start", "end", "all_day", "location", "timezone", 
             "color", "attendees", "reminders", "tags", "recurrence", 
             "override_id", "system_id", "reminder"
         )
-        val metadata = yamlMap.filterKeys { it !in knownKeys }
+        val metadata = yamlMap.filterKeys { it !in knownKeys }.mapValues { it.value ?: "" }
 
         return CalendarEvent(
             title = title,
@@ -82,7 +131,7 @@ object YamlConverter {
             reminders = reminders,
             timezone = timezone,
             color = color,
-            tags = (yamlMap["tags"] as? List<String>) ?: emptyList(),
+            tags = (yamlMap["tags"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
             recurrenceRule = yamlMap["recurrence"]?.toString(),
             overrideId = yamlMap["override_id"]?.toString(),
             body = body,
@@ -131,8 +180,10 @@ object YamlConverter {
                 }
             }
             
-            append("---\n\n")
-            append(event.body)
+            append("---\n")
+            if (event.body.isNotBlank()) {
+                append("\n${event.body}")
+            }
         }
     }
 
