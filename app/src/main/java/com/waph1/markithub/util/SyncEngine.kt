@@ -196,7 +196,7 @@ class SyncEngine(private val context: Context) {
         listChildDocuments(folderUri).forEach { info ->
             val currentRelPath = if (relativePath.isEmpty()) info.name else "$relativePath/${info.name}"
             val dbPath = "$calendarName/$currentRelPath"
-            if (info.isDirectory) scanFolderOptimized(calendarName, info.uri, map, newList, currentRelPath, foundPaths, seenIds)
+            if (info.isDirectory && !info.name.startsWith(".")) scanFolderOptimized(calendarName, info.uri, map, newList, currentRelPath, foundPaths, seenIds)
             else if (info.name.endsWith(".md") && !info.name.contains(".sync-conflict-")) {
                 foundPaths.add(dbPath); val meta = dao.getMetadata(dbPath)
                 if (meta?.systemEventId != null && meta.lastModified == info.lastModified && !seenIds.contains(meta.systemEventId)) {
@@ -228,9 +228,8 @@ class SyncEngine(private val context: Context) {
         listChildDocuments(folderUri).forEach { info ->
             val pathForMeta = if (relativePath.isEmpty()) info.name else "$relativePath/${info.name}"
             val dbPath = "Tasks/$pathForMeta"
-            if (info.isDirectory) {
-                if (info.name != ".Archive" && info.name != ".Deleted" && info.name != "Pinned") scanTaskFolderOptimized(info.uri, pathForMeta, map, newList, foundPaths, seenIds)
-                else if (info.name == "Pinned") scanTaskFolderOptimized(info.uri, relativePath, map, newList, foundPaths, seenIds)
+            if (info.isDirectory && !info.name.startsWith(".")) {
+                scanTaskFolderOptimized(info.uri, pathForMeta, map, newList, foundPaths, seenIds)
             } else if (info.name.endsWith(".md") && !info.name.contains(".sync-conflict-")) {
                 foundPaths.add(dbPath); val meta = dao.getMetadata(dbPath)
                 if (meta?.systemEventId != null && meta.lastModified == info.lastModified && !seenIds.contains(meta.systemEventId)) {
