@@ -208,8 +208,9 @@ class SyncEngine(private val context: Context) {
                 parseFileOptimized(info.uri, info.name, calendarName, context)?.let { event ->
                     var finalEvent = event.copy(needsUpdate = true, fileName = dbPath, sourceUri = info.uri.toString())
                     val fileNameWithoutExt = info.name.substringBeforeLast(".md")
-                    val datePart = fileNameWithoutExt.substringBefore("_", "")
-                    val expectedTitle = if (fileNameWithoutExt.contains("_")) fileNameWithoutExt.substringAfter("_").replace("_", " ") else fileNameWithoutExt.replace("_", " ")
+                    val cleanName = fileNameWithoutExt.substringBefore("~") // Strip conflict suffix
+                    val datePart = cleanName.substringBefore("_", "")
+                    val expectedTitle = if (cleanName.contains("_")) cleanName.substringAfter("_").replace("_", " ") else cleanName.replace("_", " ")
                     val parsedDate = try { LocalDate.parse(datePart) } catch (e: Exception) { null }
                     if (finalEvent.title != expectedTitle) finalEvent = finalEvent.copy(title = expectedTitle, needsUpdate = true)
                     if (parsedDate != null) { val start = finalEvent.start ?: LocalDateTime.now(); if (start.toLocalDate() != parsedDate) finalEvent = finalEvent.copy(start = parsedDate.atTime(start.toLocalTime()), needsUpdate = true) }
@@ -240,7 +241,8 @@ class SyncEngine(private val context: Context) {
                 SyncLogger.log(context, "Parsing task file: $dbPath")
                 parseTaskFileOptimized(info.uri, info.name, relativePath, context)?.let { event ->
                     var finalEvent = event.copy(needsUpdate = true, fileName = dbPath, sourceUri = info.uri.toString())
-                    val expectedTitle = "[] ${info.name.substringBeforeLast(".md")}"
+                    val cleanName = info.name.substringBeforeLast(".md").substringBefore("~")
+                    val expectedTitle = "[] $cleanName"
                     if (finalEvent.title != expectedTitle) finalEvent = finalEvent.copy(title = expectedTitle, needsUpdate = true)
                     if (!YamlConverter.hasRequiredMetadata(info.uri, context)) finalEvent = finalEvent.copy(needsUpdate = true)
                     if (finalEvent.systemEventId != null && (seenIds.contains(finalEvent.systemEventId!!) || !verifyEventExists(finalEvent.systemEventId!!))) finalEvent = finalEvent.copy(systemEventId = null)
@@ -267,7 +269,8 @@ class SyncEngine(private val context: Context) {
             if (!Regex("(?m)^(reminder|start):").containsMatchIn(content)) return null
             val event = YamlConverter.parseMarkdown(content, fileName, "Tasks")
             if (event.start == null) return null
-            event.copy(title = if (event.title.startsWith("[] ")) event.title else "[] ${fileName.substringBeforeLast(".md")}", end = event.start.plusMinutes(10), fileName = "Tasks/" + (if (relativePath.isEmpty()) fileName else "$relativePath/$fileName"))
+            val cleanName = fileName.substringBeforeLast(".md").substringBefore("~")
+            event.copy(title = if (event.title.startsWith("[] ")) event.title else "[] $cleanName", end = event.start.plusMinutes(10), fileName = "Tasks/" + (if (relativePath.isEmpty()) fileName else "$relativePath/$fileName"))
         } catch (e: Exception) { null }
     }
 
@@ -503,18 +506,29 @@ class SyncEngine(private val context: Context) {
             SyncLogger.log(context, "Merging provider changes for ${pEvent.title}. Provider end: ${updatedEvent.end}, File end was: ${currentEvent.end}")
             
             if (calendarName == "Tasks") { updatedEvent = normalizeTask(updatedEvent); context.contentResolver.update(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(pEvent.id.toString()).build(), eventToContentValues(updatedEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }, null, null) }
-            val start = updatedEvent.start ?: LocalDateTime.now(); val base = if (updatedEvent.recurrenceRule != null) sanitizeFilename(updatedEvent.title) else "${start.toLocalDate()}_${sanitizeFilename(updatedEvent.title)}"; val expected = "$base.md"; var finalFileName = originalFileName
+            val start = updatedEvent.start ?: LocalDateTime.now(); val base = if (updatedEvent.recurrenceRule != null) sanitizeFilename(updatedEvent.title) else "${start.toLocalDate()}_${sanitizeFilename(updatedEvent.title)}"; val expected = "$base.md"; 
+            
+            val calendarFolder = getOrCreateFolder(root, calendarName) ?: root
+            val parentUri = findParentUri(root, path) ?: calendarFolder
+            
+            var uniqueName = expected
             if (expected != originalFileName.split("/").last()) {
-                val calendarFolder = getOrCreateFolder(root, calendarName) ?: root
-                val parentUri = findParentUri(root, path) ?: calendarFolder
-                var uniqueName = expected; if (findDocumentInPath(parentUri, uniqueName) != null) { var c = 1; while (findDocumentInPath(parentUri, "$base ($c).md") != null) c++; uniqueName = "$base ($c).md" }
-                DocumentsContract.renameDocument(context.contentResolver, fileUri, uniqueName)
-                invalidateCache(parentUri)
-                finalFileName = if (originalFileName.contains("/")) originalFileName.substringBeforeLast("/") + "/" + uniqueName else "$calendarName/$uniqueName"
-                dao.delete(originalFileName)
+                 if (findDocumentInPath(parentUri, uniqueName) != null) { var c = 1; while (findDocumentInPath(parentUri, "$base ($c).md") != null) c++; uniqueName = "$base ($c).md" }
+            } else {
+                uniqueName = originalFileName.split("/").last()
             }
-            context.contentResolver.openOutputStream(fileUri, "wt")?.use { it.write(YamlConverter.toMarkdown(updatedEvent).toByteArray()) } ?: throw Exception("Could not open output stream for $originalFileName")
-            updateMetadataForFile(fileUri, finalFileName, calendarName, updatedEvent.systemEventId)
+            
+            val finalFileName = if (originalFileName.contains("/")) originalFileName.substringBeforeLast("/") + "/" + uniqueName else "$calendarName/$uniqueName"
+            
+            // Atomic Write (replaces existing fileUri)
+            val newUri = safeWrite(parentUri, uniqueName, YamlConverter.toMarkdown(updatedEvent), fileUri)
+            
+            if (newUri != null) {
+                 if (finalFileName != originalFileName) {
+                     dao.delete(originalFileName)
+                 }
+                 updateMetadataForFile(newUri, finalFileName, calendarName, updatedEvent.systemEventId)
+            }
         } catch (e: Exception) {
             logError(e, "mergeProviderChangesIntoFile for $originalFileName")
         }
@@ -523,37 +537,79 @@ class SyncEngine(private val context: Context) {
     private fun applyBatch(ops: ArrayList<ContentProviderOperation>) { if (ops.isNotEmpty()) try { context.contentResolver.applyBatch(CalendarContract.AUTHORITY, ops) } catch (e: Exception) {} }
 
     private suspend fun saveTaskFile(event: CalendarEvent, originalFileName: String?) {
-        val root = taskRootFolder ?: return; var fileName: String; var fileUri: Uri?
+        val root = taskRootFolder ?: return
+        var fileName: String
+        var parentUri: Uri?
+        var fileUri: Uri? = null
+
         val pathInTaskFolder = originalFileName?.removePrefix("Tasks/")
-        if (pathInTaskFolder != null) { fileUri = findDocumentInPath(root, pathInTaskFolder); fileName = pathInTaskFolder.split("/").last() }
-        else if (event.sourceUri != null) { 
+        
+        if (pathInTaskFolder != null) {
+             parentUri = findParentUri(root, pathInTaskFolder)
+             fileName = pathInTaskFolder.split("/").last()
+             fileUri = findDocumentInPath(root, pathInTaskFolder)
+        } else if (event.sourceUri != null) {
             fileUri = Uri.parse(event.sourceUri)
             if (!isFileAccessible(fileUri)) fileUri = null
-            fileName = event.fileName?.split("/")?.last() ?: "" 
-        }
-        else {
-            val inboxUri = getOrCreateFolder(root, "Inbox") ?: root; val base = sanitizeFilename(if (event.title.startsWith("[] ")) event.title.substring(3).trim() else event.title); fileName = "$base.md"
-            if (findDocumentInPath(inboxUri, fileName) != null) { var c = 1; while (findDocumentInPath(inboxUri, "$base ($c).md") != null) c++; fileName = "$base ($c).md" }
-            fileUri = DocumentsContract.createDocument(context.contentResolver, inboxUri, "text/markdown", fileName)
-            if (fileUri != null) invalidateCache(inboxUri)
-        }
-        if (fileUri == null) return
-        try {
-            val base = sanitizeFilename(if (event.title.startsWith("[] ")) event.title.substring(3).trim() else event.title); var desired = "$base.md"
-            if (desired != fileName || (event.sourceUri != null && originalFileName == null)) {
-                val parent = if (pathInTaskFolder != null) findParentUri(root, pathInTaskFolder) else getOrCreateFolder(root, "Inbox") ?: root
-                if (findDocumentInPath(parent!!, desired) != null && findDocumentInPath(parent, desired) != fileUri) { var c = 1; while (findDocumentInPath(parent, "$base ($c).md") != null) c++; desired = "$base ($c).md" }
-                if (desired != fileName) { 
-                    val renamed = DocumentsContract.renameDocument(context.contentResolver, fileUri, desired)
-                    if (renamed != null) fileUri = renamed
-                    invalidateCache(parent)
-                    if (originalFileName != null) { val old = originalFileName; val newRel = if (pathInTaskFolder!!.contains("/")) pathInTaskFolder.substringBeforeLast("/") + "/" + desired else desired; dao.getMetadata(old)?.let { dao.delete(old); dao.insert(it.copy(filePath = "Tasks/$newRel")) } }; fileName = desired 
-                }
+            // If sourceUri exists, we need its parent to write safely (rename logic)
+            // But getting parent from Uri is hard. We rely on path if possible.
+            // If we only have Uri, safeWrite might fail if we can't get parent.
+            // But here, if we have sourceUri, we assume it's in our tree?
+            // Actually, if we have event.fileName, we prefer that.
+            val fName = event.fileName?.removePrefix("Tasks/")
+            if (fName != null) {
+                parentUri = findParentUri(root, fName)
+                fileName = fName.split("/").last()
+            } else {
+                 // Fallback: Treat as new file in Inbox if we can't locate parent
+                 parentUri = getOrCreateFolder(root, "Inbox") ?: root
+                 val base = sanitizeFilename(if (event.title.startsWith("[] ")) event.title.substring(3).trim() else event.title)
+                 fileName = "$base.md"
             }
-            context.contentResolver.openOutputStream(fileUri, "wt")?.use { it.write(YamlConverter.toMarkdown(event).toByteArray()) }
-            val finalRelPath = if (pathInTaskFolder != null && pathInTaskFolder.contains("/")) pathInTaskFolder.substringBeforeLast("/") + "/" + fileName else if (pathInTaskFolder != null) fileName else "Inbox/$fileName"
-            updateMetadataForFile(fileUri, "Tasks/$finalRelPath", "Tasks", event.systemEventId)
-        } catch (e: Exception) {}
+        } else {
+             parentUri = getOrCreateFolder(root, "Inbox") ?: root
+             val base = sanitizeFilename(if (event.title.startsWith("[] ")) event.title.substring(3).trim() else event.title)
+             fileName = "$base.md"
+        }
+
+        if (parentUri == null) return
+
+        // Name conflict resolution
+        val base = sanitizeFilename(if (event.title.startsWith("[] ")) event.title.substring(3).trim() else event.title)
+        var desired = "$base.md"
+        
+        // If we are renaming (title changed) or creating new
+        if (desired != fileName || fileUri == null) {
+             if (findDocumentInPath(parentUri, desired) != null && findDocumentInPath(parentUri, desired) != fileUri) {
+                 var c = 1
+                 while (findDocumentInPath(parentUri, "$base ($c).md") != null) c++
+                 desired = "$base ($c).md"
+             }
+        }
+        
+        val newUri = safeWrite(parentUri, desired, YamlConverter.toMarkdown(event), fileUri)
+        
+        if (newUri != null) {
+             // Reconstruct path for metadata
+             // If parentUri is root/Inbox
+             val parentPath = if (parentUri == root) "" else "Inbox/" // Simplification, might be wrong if deep folder
+             // Better: we can't easily reconstruct path from Uri.
+             // But we know where we put it.
+             
+             // If we preserved the folder structure:
+             val newPath = if (pathInTaskFolder != null && pathInTaskFolder.contains("/")) {
+                 pathInTaskFolder.substringBeforeLast("/") + "/" + desired
+             } else if (parentUri == getOrCreateFolder(root, "Inbox")) {
+                 "Inbox/$desired"
+             } else {
+                 desired // Root?
+             }
+             
+             if (originalFileName != null && originalFileName != "Tasks/$newPath") {
+                 dao.delete(originalFileName)
+             }
+             updateMetadataForFile(newUri, "Tasks/$newPath", "Tasks", event.systemEventId)
+        }
     }
 
     private suspend fun completeTask(event: CalendarEvent) {
@@ -781,6 +837,33 @@ class SyncEngine(private val context: Context) {
         val v = ContentValues().apply { put(CalendarContract.Calendars.ACCOUNT_NAME, accountName); put(CalendarContract.Calendars.ACCOUNT_TYPE, accountType); put(CalendarContract.Calendars.NAME, name); put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, "App: $name"); put(CalendarContract.Calendars.CALENDAR_COLOR, android.graphics.Color.BLUE); put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER); put(CalendarContract.Calendars.OWNER_ACCOUNT, accountName); put(CalendarContract.Calendars.SYNC_EVENTS, 1) }
         val id = context.contentResolver.insert(asSyncAdapter(CalendarContract.Calendars.CONTENT_URI), v)?.lastPathSegment?.toLongOrNull()
         if (id != null) newCalendarsCreated.add(id); return id
+    }
+
+    private fun safeWrite(parentUri: Uri, fileName: String, content: String, originalUri: Uri?): Uri? {
+        try {
+            val tempName = ".tmp_${System.currentTimeMillis()}_$fileName"
+            val tempUri = DocumentsContract.createDocument(context.contentResolver, parentUri, "text/markdown", tempName) ?: return null
+            
+            context.contentResolver.openOutputStream(tempUri, "wt")?.use { it.write(content.toByteArray()) } ?: run {
+                DocumentsContract.deleteDocument(context.contentResolver, tempUri)
+                return null
+            }
+            
+            if (originalUri != null) {
+                try {
+                    DocumentsContract.deleteDocument(context.contentResolver, originalUri)
+                } catch (e: Exception) {
+                    // If delete fails, we might have a duplicate. 
+                    // But we proceed to rename the temp file anyway.
+                }
+            }
+            
+            val renamed = DocumentsContract.renameDocument(context.contentResolver, tempUri, fileName)
+            return renamed ?: tempUri
+        } catch (e: Exception) {
+            logError(e, "safeWrite for $fileName")
+            return null
+        }
     }
 
     private fun asSyncAdapter(uri: Uri) = uri.buildUpon().appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true").appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName).appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType).build()

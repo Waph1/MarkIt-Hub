@@ -43,7 +43,7 @@ object YamlConverter {
     }
 
     fun parseMarkdown(content: String, fileName: String, calendarName: String): CalendarEvent {
-        val regex = Regex("""^---\s*\n(.*?)\n---\s*(?:\n(.*))?$""", RegexOption.DOT_MATCHES_ALL)
+        val regex = Regex("""^---\s*\n(.*?)\n---\s*(?:\n(.*)|$)?$""", RegexOption.DOT_MATCHES_ALL)
         val matchResult = regex.find(content.trim())
 
         var yamlContent = matchResult?.groups?.get(1)?.value
@@ -193,7 +193,7 @@ object YamlConverter {
     }
 
     fun removeCalendarData(content: String): String {
-        val regex = Regex("""^---\s*\n(.*?)\n---\s*(?:\n(.*))?$""", RegexOption.DOT_MATCHES_ALL)
+        val regex = Regex("""^---\s*\n(.*?)\n---\s*(?:\n(.*)|$)?$""", RegexOption.DOT_MATCHES_ALL)
         val matchResult = regex.find(content.trim()) ?: return content
 
         val yamlContent = matchResult.groups[1]?.value ?: return content
