@@ -2,22 +2,23 @@ package com.waph1.markithub.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
+import android.provider.CalendarContract
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
 import com.waph1.markithub.KEY_LAST_SYNC_TIME
 import com.waph1.markithub.util.SyncEngine
-import com.waph1.markithub.util.SyncWorker
+import com.waph1.markithub.util.SyncLogger
+import com.waph1.markithub.util.SyncScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.util.concurrent.TimeUnit
 
 sealed class SyncStatus {
     object Idle : SyncStatus()
@@ -26,7 +27,7 @@ sealed class SyncStatus {
 }
 
 class SyncViewModel(application: Application) : AndroidViewModel(application) {
-
+    private val LOG_NAME = "calendar"
     private val _syncStatus = MutableStateFlow<SyncStatus>(SyncStatus.Idle)
     val syncStatus: StateFlow<SyncStatus> = _syncStatus
 
@@ -42,17 +43,32 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncLogs = MutableStateFlow<List<String>>(emptyList())
     val syncLogs: StateFlow<List<String>> = _syncLogs
     
-    // Sync Frequency (minutes). 0 = Manual
     private val _syncInterval = MutableStateFlow<Long>(15)
     val syncInterval: StateFlow<Long> = _syncInterval
+
+    private val _themeColor = MutableStateFlow(0xFF2196F3) // Default Blue
+    val themeColor: StateFlow<Long> = _themeColor
 
     private val syncEngine = SyncEngine(application)
     private val prefs = application.getSharedPreferences(com.waph1.markithub.PREFS_NAME, Context.MODE_PRIVATE)
 
+    private val preferenceChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPrefs, key ->
+        if (key == KEY_LAST_SYNC_TIME) {
+            val lastSyncMillis = sharedPrefs.getLong(KEY_LAST_SYNC_TIME, 0)
+            if (lastSyncMillis > 0) {
+                _lastSyncTime.value = Instant.ofEpochMilli(lastSyncMillis)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDateTime()
+            }
+        }
+    }
+
     init {
         val savedInterval = prefs.getLong("syncInterval", 15)
         _syncInterval.value = savedInterval
-        _syncLogs.value = com.waph1.markithub.util.SyncLogger.getLogs(getApplication())
+        _themeColor.value = prefs.getLong("calendarThemeColor", 0xFF2196F3)
+        prefs.registerOnSharedPreferenceChangeListener(preferenceChangeListener)
+        refreshLogs()
         
         val lastSyncMillis = prefs.getLong(KEY_LAST_SYNC_TIME, 0)
         if (lastSyncMillis > 0) {
@@ -60,29 +76,41 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
                 .atZone(ZoneId.systemDefault())
                 .toLocalDateTime()
         }
-        
-        com.waph1.markithub.util.SyncScheduler.schedule(getApplication(), savedInterval)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        prefs.unregisterOnSharedPreferenceChangeListener(preferenceChangeListener)
     }
 
     fun setRootUri(uri: Uri) {
         _rootUri.value = uri
         syncEngine.setRootUri(uri)
+        ensureAccount()
     }
 
     fun setTaskRootUri(uri: Uri) {
         _taskRootUri.value = uri
         syncEngine.setTaskRootUri(uri)
+        ensureAccount()
+    }
+
+    private fun ensureAccount() {
+        viewModelScope.launch(Dispatchers.IO) {
+            syncEngine.ensureAccountExists()
+        }
     }
     
     fun setSyncInterval(minutes: Long) {
         _syncInterval.value = minutes
         prefs.edit().putLong("syncInterval", minutes).apply()
-        com.waph1.markithub.util.SyncScheduler.schedule(getApplication(), minutes)
-        addLog("Sync interval set to ${if (minutes == 0L) "Manual" else "$minutes min"}")
+        SyncScheduler.schedule(getApplication(), minutes)
+        addLog("Calendar sync interval set to ${if (minutes == 0L) "Manual" else "$minutes min"}")
     }
 
-    private fun scheduleSync(minutes: Long) {
-        com.waph1.markithub.util.SyncScheduler.schedule(getApplication(), minutes)
+    fun setThemeColor(color: Long) {
+        _themeColor.value = color
+        prefs.edit().putLong("calendarThemeColor", color).apply()
     }
 
     fun triggerSync() {
@@ -93,20 +121,31 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             _syncStatus.value = SyncStatus.Syncing
-            addLog("Starting manual sync...")
-            addLog("Active Folders - Root: ${_rootUri.value}, Task: ${_taskRootUri.value}")
+            addLog("Requesting system calendar sync...")
             try {
-                val result = syncEngine.performSync()
-                val now = LocalDateTime.now()
-                _lastSyncTime.value = now
-                
-                prefs.edit().putLong(KEY_LAST_SYNC_TIME, System.currentTimeMillis()).apply()
-                
-                addLog("Sync success. Processed: ${result.eventsProcessed}, Deleted: ${result.deletions}")
-                _syncStatus.value = SyncStatus.Idle
+                withContext(Dispatchers.IO) {
+                    syncEngine.ensureAccountExists()
+                    val account = android.accounts.Account("MarkItHub Calendars", "com.waph1.markithub.calendars")
+                    val extras = android.os.Bundle().apply {
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                        putBoolean(android.content.ContentResolver.SYNC_EXTRAS_FORCE, true)
+                    }
+                    android.content.ContentResolver.requestSync(account, CalendarContract.AUTHORITY, extras)
+                    
+                    kotlinx.coroutines.delay(500)
+                    var attempts = 0
+                    while ((android.content.ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY) || android.content.ContentResolver.isSyncPending(account, CalendarContract.AUTHORITY)) && attempts < 45) {
+                        refreshLogs()
+                        kotlinx.coroutines.delay(1000)
+                        attempts++
+                    }
+                }
             } catch (e: Exception) {
-                addLog("Sync failed: ${e.message}")
-                _syncStatus.value = SyncStatus.Error(e.message ?: "Unknown error")
+                addLog("Sync launch error: ${e.message}")
+            } finally {
+                _syncStatus.value = SyncStatus.Idle
+                refreshLogs()
             }
         }
     }
@@ -116,37 +155,37 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
             _syncStatus.value = SyncStatus.Syncing
             try {
                 syncEngine.wipeAllAppData()
-                addLog("All app data and calendars wiped successfully.")
+                addLog("Calendar app data and system entries wiped.")
                 _lastSyncTime.value = null
                 _syncStatus.value = SyncStatus.Idle
             } catch (e: Exception) {
-                addLog("Nuke failed: ${e.message}")
+                addLog("Calendar nuke failed: ${e.message}")
                 _syncStatus.value = SyncStatus.Idle
             }
         }
     }
     
     fun refreshLogs() {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val logs = com.waph1.markithub.util.SyncLogger.getLogs(getApplication())
-            _syncLogs.value = logs
+        viewModelScope.launch(Dispatchers.IO) {
+            _syncLogs.value = SyncLogger.getLogs(getApplication(), LOG_NAME)
         }
     }
 
     fun clearLogs() {
-        com.waph1.markithub.util.SyncLogger.clearLogs(getApplication())
+        SyncLogger.clearLogs(getApplication(), LOG_NAME)
         refreshLogs()
     }
 
     fun exportLogs() {
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            com.waph1.markithub.util.SyncLogger.export(getApplication())
-            addLog("Logs exported to Sync.log in root folder.")
+        val uri = _rootUri.value ?: _taskRootUri.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            SyncLogger.export(getApplication(), LOG_NAME, uri)
+            refreshLogs()
         }
     }
 
     private fun addLog(message: String) {
-        com.waph1.markithub.util.SyncLogger.log(getApplication(), message)
+        SyncLogger.log(getApplication(), LOG_NAME, message)
         refreshLogs()
     }
 }

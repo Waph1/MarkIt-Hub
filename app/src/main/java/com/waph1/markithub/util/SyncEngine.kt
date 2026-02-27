@@ -23,8 +23,8 @@ data class SyncResult(val eventsProcessed: Int, val deletions: Int)
 
 class SyncEngine(private val context: Context) {
 
-    private val accountName = "MarkIt Hub"
-    private val accountType = CalendarContract.ACCOUNT_TYPE_LOCAL
+    private val accountName = "MarkItHub Calendars"
+    private val accountType = "com.waph1.markithub.calendars"
     private var rootFolder: Uri? = null
     private var taskRootFolder: Uri? = null
     
@@ -39,13 +39,13 @@ class SyncEngine(private val context: Context) {
     private fun logError(e: Throwable, context: String) {
         val sw = StringWriter()
         e.printStackTrace(PrintWriter(sw))
-        SyncLogger.log(this.context, "ERROR in $context: ${e.message}\n$sw")
+        SyncLogger.log(this.context, "calendar", "ERROR in $context: ${e.message}\n$sw")
     }
 
     suspend fun wipeAllAppData() = withContext(Dispatchers.IO) {
-        SyncLogger.log(context, "Wiping all app data and calendars...")
+        SyncLogger.log(context, "calendar", "Wiping all app data and calendars...")
         val uri = asSyncAdapter(CalendarContract.Calendars.CONTENT_URI)
-        context.contentResolver.delete(uri, "${CalendarContract.Calendars.ACCOUNT_NAME} = ?", arrayOf(accountName))
+        context.contentResolver.delete(uri, "${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.ACCOUNT_TYPE} = ?", arrayOf(accountName, accountType))
         dao.getAll().forEach { dao.delete(it.filePath) }
         childrenCache.clear()
     }
@@ -83,14 +83,14 @@ class SyncEngine(private val context: Context) {
                         (map.values + list).forEach { it.color?.let { c -> allUsedColors.add(c) } }
                         calendarEventsData[name] = Pair(map, list)
                     }
-                    SyncLogger.log(context, "Scanned ${calendarEventsData.size} calendars.")
+                    SyncLogger.log(context, "calendar", "Scanned ${calendarEventsData.size} calendars.")
                 }
 
                 val taskEventsMap = mutableMapOf<Long, CalendarEvent>(); val newTaskEvents = mutableListOf<CalendarEvent>()
                 if (taskRootFolder != null) {
                     scanTaskFolderOptimized(taskRootFolder!!, "", taskEventsMap, newTaskEvents, foundFilePaths, seenIds)
                     (taskEventsMap.values + newTaskEvents).forEach { event -> event.color?.let { allUsedColors.add(it) } }
-                    SyncLogger.log(context, "Scanned tasks: ${taskEventsMap.size} existing, ${newTaskEvents.size} new.")
+                    SyncLogger.log(context, "calendar", "Scanned tasks: ${taskEventsMap.size} existing, ${newTaskEvents.size} new.")
                 }
                 
                 cleanupOrphanedMetadata(foundFilePaths)
@@ -111,7 +111,7 @@ class SyncEngine(private val context: Context) {
                     processed += res.eventsProcessed; deletions += res.deletions
                 }
 
-                SyncLogger.log(context, "Sync complete. Total processed: $processed, Total deletions: $deletions")
+                SyncLogger.log(context, "calendar", "Sync complete. Total processed: $processed, Total deletions: $deletions")
                 return@withContext SyncResult(processed, deletions)
             } catch (e: Exception) {
                 logError(e, "performSync")
@@ -123,17 +123,17 @@ class SyncEngine(private val context: Context) {
     }
 
     private suspend fun mergeFolders(source: Uri, target: Uri) {
-        SyncLogger.log(context, "Merging folder: $source -> $target")
+        SyncLogger.log(context, "calendar", "Merging folder: $source -> $target")
         listChildDocuments(source).forEach { file ->
             if (file.isDirectory) getOrCreateFolder(target, file.name)?.let { mergeFolders(file.uri, it) }
             else try { 
-                SyncLogger.log(context, "Moving file during merge: ${file.name}")
+                SyncLogger.log(context, "calendar", "Moving file during merge: ${file.name}")
                 DocumentsContract.moveDocument(context.contentResolver, file.uri, source, target) 
                 invalidateCache(source); invalidateCache(target)
             }
             catch (e: Exception) { 
                 try { 
-                    SyncLogger.log(context, "Copying file during merge (fallback): ${file.name}")
+                    SyncLogger.log(context, "calendar", "Copying file during merge (fallback): ${file.name}")
                     DocumentsContract.copyDocument(context.contentResolver, file.uri, target)?.let { 
                         DocumentsContract.deleteDocument(context.contentResolver, file.uri)
                         invalidateCache(source); invalidateCache(target)
@@ -164,10 +164,10 @@ class SyncEngine(private val context: Context) {
         val allMeta = dao.getAll()
         var count = 0
         allMeta.forEach { if (!foundPaths.contains(it.filePath)) { 
-            SyncLogger.log(context, "Cleaning orphaned metadata: ${it.filePath}")
+            SyncLogger.log(context, "calendar", "Cleaning orphaned metadata: ${it.filePath}")
             dao.delete(it.filePath); count++ 
         } }
-        if (count > 0) SyncLogger.log(context, "Cleaned $count orphaned metadata entries.")
+        if (count > 0) SyncLogger.log(context, "calendar", "Cleaned $count orphaned metadata entries.")
     }
 
     private fun listChildDocuments(parentUri: Uri): List<DocumentInfo> {
@@ -201,10 +201,10 @@ class SyncEngine(private val context: Context) {
                 foundPaths.add(dbPath); val meta = dao.getMetadata(dbPath)
                 if (meta?.systemEventId != null && meta.lastModified == info.lastModified && !seenIds.contains(meta.systemEventId)) {
                     seenIds.add(meta.systemEventId); map[meta.systemEventId] = CalendarEvent(title = info.name.substringBeforeLast(".md"), systemEventId = meta.systemEventId, fileName = dbPath, sourceUri = info.uri.toString(), calendarName = calendarName, needsUpdate = false)
-                    SyncLogger.log(context, "File skipped (unchanged): $dbPath")
+                    SyncLogger.log(context, "calendar", "File skipped (unchanged): $dbPath")
                     return@forEach
                 }
-                SyncLogger.log(context, "Parsing file: $dbPath (Modified: ${info.lastModified})")
+                SyncLogger.log(context, "calendar", "Parsing file: $dbPath (Modified: ${info.lastModified})")
                 parseFileOptimized(info.uri, info.name, calendarName, context)?.let { event ->
                     var finalEvent = event.copy(needsUpdate = true, fileName = dbPath, sourceUri = info.uri.toString())
                     val fileNameWithoutExt = info.name.substringBeforeLast(".md")
@@ -234,10 +234,10 @@ class SyncEngine(private val context: Context) {
                 foundPaths.add(dbPath); val meta = dao.getMetadata(dbPath)
                 if (meta?.systemEventId != null && meta.lastModified == info.lastModified && !seenIds.contains(meta.systemEventId)) {
                     seenIds.add(meta.systemEventId); map[meta.systemEventId] = CalendarEvent(title = "[] " + info.name.substringBeforeLast(".md"), systemEventId = meta.systemEventId, fileName = dbPath, sourceUri = info.uri.toString(), calendarName = "Tasks", needsUpdate = false)
-                    SyncLogger.log(context, "Task file skipped (unchanged): $dbPath")
+                    SyncLogger.log(context, "calendar", "Task file skipped (unchanged): $dbPath")
                     return@forEach
                 }
-                SyncLogger.log(context, "Parsing task file: $dbPath")
+                SyncLogger.log(context, "calendar", "Parsing task file: $dbPath")
                 parseTaskFileOptimized(info.uri, info.name, relativePath, context)?.let { event ->
                     var finalEvent = event.copy(needsUpdate = true, fileName = dbPath, sourceUri = info.uri.toString())
                     val cleanName = info.name.substringBeforeLast(".md").substringBefore("~")
@@ -295,7 +295,7 @@ class SyncEngine(private val context: Context) {
 
                 var currentOp = 0
 
-                SyncLogger.log(context, "Starting synchronization phase for Tasks (ID: $calendarId). Total items to evaluate: $totalOps")
+                SyncLogger.log(context, "calendar", "Starting synchronization phase for Tasks (ID: $calendarId). Total items to evaluate: $totalOps")
 
                 
 
@@ -305,27 +305,27 @@ class SyncEngine(private val context: Context) {
 
                     val fEvent = fileEventsMap[id]
 
-                    SyncLogger.log(context, "[$currentOp/$totalOps] Evaluating provider task: ${pEvent.title}")
+                    SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Evaluating provider task: ${pEvent.title}")
 
                     
 
                     if (pEvent.title.startsWith("[x] ", true) || pEvent.title.startsWith("[X] ", true)) {
 
-                        if (fEvent != null) { SyncLogger.log(context, "[$currentOp/$totalOps] Completing task: ${fEvent.title}"); completeTask(fEvent) }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++
+                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Completing task: ${fEvent.title}"); completeTask(fEvent) }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++
 
                     } else if (pEvent.deleted) {
 
-                        if (fEvent != null) { SyncLogger.log(context, "[$currentOp/$totalOps] Removing reminder from: ${fEvent.title}"); removeReminderFromFile(fEvent); processed++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build())
+                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Removing reminder from: ${fEvent.title}"); removeReminderFromFile(fEvent); processed++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build())
 
                     } else if (pEvent.dirty) {
 
-                        SyncLogger.log(context, "[$currentOp/$totalOps] Provider task dirty: ${pEvent.title}")
+                        SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Provider task dirty: ${pEvent.title}")
 
-                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "[$currentOp/$totalOps] Updating task file (both dirty/needs update): ${pEvent.title}"); saveTaskFile(providerEventToModel(pEvent, null, "Tasks"), null); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
+                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating task file (both dirty/needs update): ${pEvent.title}"); saveTaskFile(providerEventToModel(pEvent, null, "Tasks"), null); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
 
                         else if (fEvent != null) mergeProviderChangesIntoFile(pEvent, fEvent, "Tasks", calendarId)
 
-                        else { val adopted = normalizeTask(providerEventToModel(pEvent, null, "Tasks")); SyncLogger.log(context, "[$currentOp/$totalOps] Saving new task from calendar: ${adopted.title}"); saveTaskFile(adopted, null); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValues(eventToContentValues(adopted, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }).build()) }
+                        else { val adopted = normalizeTask(providerEventToModel(pEvent, null, "Tasks")); SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Saving new task from calendar: ${adopted.title}"); saveTaskFile(adopted, null); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValues(eventToContentValues(adopted, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }).build()) }
 
                         if (ops.none { it.uri.lastPathSegment == id.toString() }) ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build())
 
@@ -333,21 +333,21 @@ class SyncEngine(private val context: Context) {
 
                     } else if (fEvent == null) {
 
-                        if (!newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "[$currentOp/$totalOps] Deleting provider task (file missing): ${pEvent.title}"); ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++ }
+                        if (!newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Deleting provider task (file missing): ${pEvent.title}"); ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++ }
 
                     } else if (fEvent.needsUpdate) {
 
-                        SyncLogger.log(context, "[$currentOp/$totalOps] Updating provider task (file changed): ${fEvent.title}"); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValues(eventToContentValues(fEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }).build()); processed++
+                        SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating provider task (file changed): ${fEvent.title}"); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValues(eventToContentValues(fEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }).build()); processed++
 
                     }
 
-                    if (ops.size >= 50) { SyncLogger.log(context, "Applying batch of ${ops.size} Task operations..."); applyBatch(ops); ops.clear() }
+                    if (ops.size >= 50) { SyncLogger.log(context, "calendar", "Applying batch of ${ops.size} Task operations..."); applyBatch(ops); ops.clear() }
 
                 }
 
-                fileEventsMap.keys.forEach { if (!providerEvents.containsKey(it) && !newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "Removing reminder (orphaned): ${fileEventsMap[it]!!.title}"); removeReminderFromFile(ensureFullEvent(fileEventsMap[it]!!)); deletions++ } }
+                fileEventsMap.keys.forEach { if (!providerEvents.containsKey(it) && !newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "calendar", "Removing reminder (orphaned): ${fileEventsMap[it]!!.title}"); removeReminderFromFile(ensureFullEvent(fileEventsMap[it]!!)); deletions++ } }
 
-                if (ops.isNotEmpty()) { SyncLogger.log(context, "Applying final batch of ${ops.size} Task operations..."); applyBatch(ops) }
+                if (ops.isNotEmpty()) { SyncLogger.log(context, "calendar", "Applying final batch of ${ops.size} Task operations..."); applyBatch(ops) }
 
                 
 
@@ -391,7 +391,7 @@ class SyncEngine(private val context: Context) {
 
                 
 
-                            SyncLogger.log(context, "[$currentOp/$totalOps] Syncing new file to Tasks: ${event.title}")
+                            SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Syncing new file to Tasks: ${event.title}")
 
                     insertProviderEvent(event, calendarId)?.let { newId -> 
 
@@ -403,7 +403,7 @@ class SyncEngine(private val context: Context) {
 
                         } catch (e: Exception) {
 
-                            SyncLogger.log(context, "Failed to create task, rolling back: ${e.message}");
+                            SyncLogger.log(context, "calendar", "Failed to create task, rolling back: ${e.message}");
 
                             deleteProviderEvent(newId)
 
@@ -421,30 +421,30 @@ class SyncEngine(private val context: Context) {
                 val providerEvents = loadProviderEvents(calendarId, colorMap); var processed = 0; var deletions = 0; val ops = ArrayList<ContentProviderOperation>()
                 val totalOps = providerEvents.size + newFileEvents.size
                 var currentOp = 0
-                SyncLogger.log(context, "Starting synchronization phase for calendar '$calendarName' (ID: $calendarId). Total items to evaluate: $totalOps")
+                SyncLogger.log(context, "calendar", "Starting synchronization phase for calendar '$calendarName' (ID: $calendarId). Total items to evaluate: $totalOps")
                 
                 providerEvents.forEach { (id, pEvent) ->
                     currentOp++
                     val fEvent = fileEventsMap[id]
-                    SyncLogger.log(context, "[$currentOp/$totalOps] Evaluating provider event: ${pEvent.title}")
+                    SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Evaluating provider event: ${pEvent.title}")
                     
                     if (pEvent.deleted) { 
-                        if (fEvent != null) { SyncLogger.log(context, "[$currentOp/$totalOps] Deleting file (provider marked deleted): ${fEvent.title}"); deleteFile(fEvent); deletions++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()) 
+                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Deleting file (provider marked deleted): ${fEvent.title}"); deleteFile(fEvent); deletions++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()) 
                     } else if (pEvent.dirty) {
-                        SyncLogger.log(context, "[$currentOp/$totalOps] Provider event dirty: ${pEvent.title}")
-                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "[$currentOp/$totalOps] Updating file (both dirty/needs update): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, null, calendarName)); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
+                        SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Provider event dirty: ${pEvent.title}")
+                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating file (both dirty/needs update): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, null, calendarName)); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
                         else if (fEvent != null) mergeProviderChangesIntoFile(pEvent, fEvent, calendarName, calendarId)
-                        else { SyncLogger.log(context, "[$currentOp/$totalOps] Saving new file from calendar (dirty): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, null, calendarName)) }
+                        else { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Saving new file from calendar (dirty): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, null, calendarName)) }
                         ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()); processed++
                     } else if (fEvent == null) { 
-                        if (!newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "[$currentOp/$totalOps] Deleting provider event (file missing): ${pEvent.title}"); ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++ }
+                        if (!newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Deleting provider event (file missing): ${pEvent.title}"); ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++ }
                     } else if (fEvent.needsUpdate) { 
-                        SyncLogger.log(context, "[$currentOp/$totalOps] Updating provider event (file changed): ${fEvent.title}"); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValues(eventToContentValues(fEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }).build()); processed++ 
+                        SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating provider event (file changed): ${fEvent.title}"); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValues(eventToContentValues(fEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }).build()); processed++ 
                     }
-                    if (ops.size >= 50) { SyncLogger.log(context, "Applying batch of ${ops.size} operations for $calendarName..."); applyBatch(ops); ops.clear() }
+                    if (ops.size >= 50) { SyncLogger.log(context, "calendar", "Applying batch of ${ops.size} operations for $calendarName..."); applyBatch(ops); ops.clear() }
                 }
-                fileEventsMap.keys.forEach { if (!providerEvents.containsKey(it) && !newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "Deleting orphaned file: ${fileEventsMap[it]!!.title}"); deleteFile(ensureFullEvent(fileEventsMap[it]!!)); deletions++ } }
-                if (ops.isNotEmpty()) { SyncLogger.log(context, "Applying final batch of ${ops.size} operations for $calendarName..."); applyBatch(ops) }
+                fileEventsMap.keys.forEach { if (!providerEvents.containsKey(it) && !newCalendarsCreated.contains(calendarId)) { SyncLogger.log(context, "calendar", "Deleting orphaned file: ${fileEventsMap[it]!!.title}"); deleteFile(ensureFullEvent(fileEventsMap[it]!!)); deletions++ } }
+                if (ops.isNotEmpty()) { SyncLogger.log(context, "calendar", "Applying final batch of ${ops.size} operations for $calendarName..."); applyBatch(ops) }
                 
                         newFileEvents.forEach { rawEvent ->
                             currentOp++
@@ -456,13 +456,13 @@ class SyncEngine(private val context: Context) {
                                     rawEvent.copy(start = LocalDateTime.now())
                                 }
                             } else rawEvent
-                            SyncLogger.log(context, "[$currentOp/$totalOps] Syncing new file to calendar: ${event.title}")
+                            SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Syncing new file to calendar: ${event.title}")
                             insertProviderEvent(event, calendarId)?.let { newId -> 
                         try {
                             saveToFile(event.copy(systemEventId = newId))
                             processed++ 
                         } catch (e: Exception) {
-                            SyncLogger.log(context, "Failed to create event file, rolling back: ${e.message}");
+                            SyncLogger.log(context, "calendar", "Failed to create event file, rolling back: ${e.message}");
                             deleteProviderEvent(newId)
                         }
                     } 
@@ -490,19 +490,19 @@ class SyncEngine(private val context: Context) {
         }
 
         if (fileUri == null) {
-            SyncLogger.log(context, "Could not find file for $originalFileName")
+            SyncLogger.log(context, "calendar", "Could not find file for $originalFileName")
             return
         }
 
         try {
             val content = context.contentResolver.openInputStream(fileUri)?.use { it.bufferedReader().readText() } ?: run {
-                SyncLogger.log(context, "Could not read content for $originalFileName")
+                SyncLogger.log(context, "calendar", "Could not read content for $originalFileName")
                 return
             }
             val currentEvent = YamlConverter.parseMarkdown(content, originalFileName.split("/").last(), calendarName)
             var updatedEvent = providerEventToModel(pEvent, originalFileName, calendarName).copy(body = currentEvent.body, metadata = currentEvent.metadata, tags = currentEvent.tags)
             
-            SyncLogger.log(context, "Merging provider changes for ${pEvent.title}. Provider end: ${updatedEvent.end}, File end was: ${currentEvent.end}")
+            SyncLogger.log(context, "calendar", "Merging provider changes for ${pEvent.title}. Provider end: ${updatedEvent.end}, File end was: ${currentEvent.end}")
             
             if (calendarName == "Tasks") { updatedEvent = normalizeTask(updatedEvent); context.contentResolver.update(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(pEvent.id.toString()).build(), eventToContentValues(updatedEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }, null, null) }
             val start = updatedEvent.start ?: LocalDateTime.now(); val base = if (updatedEvent.recurrenceRule != null) sanitizeFilename(updatedEvent.title) else "${start.toLocalDate()}_${sanitizeFilename(updatedEvent.title)}"; val expected = "$base.md"; 
@@ -679,7 +679,7 @@ class SyncEngine(private val context: Context) {
              if (uri != null) invalidateCache(targetFolder)
         }
         uri?.let { 
-            // SyncLogger.log(context, "Writing to file: $it (expected: $expected)") // Commented out to avoid spam, uncomment if needed
+            // SyncLogger.log(context, "calendar", "Writing to file: $it (expected: $expected)") // Commented out to avoid spam, uncomment if needed
             context.contentResolver.openOutputStream(it, "wt")?.use { out -> out.write(YamlConverter.toMarkdown(event).toByteArray()) }; updateMetadataForFile(it, "${event.calendarName}/${if (event.recurrenceRule != null) "" else "${start.year}/${String.format("%02d", start.monthValue)}/"}$expected", event.calendarName, event.systemEventId) 
         }
     }
@@ -833,7 +833,7 @@ class SyncEngine(private val context: Context) {
 
     private fun getOrCreateCalendarId(name: String): Long? {
         context.contentResolver.query(CalendarContract.Calendars.CONTENT_URI, arrayOf(CalendarContract.Calendars._ID), "${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.NAME} = ?", arrayOf(accountName, name), null)?.use { if (it.moveToFirst()) return it.getLong(0) }
-        val v = ContentValues().apply { put(CalendarContract.Calendars.ACCOUNT_NAME, accountName); put(CalendarContract.Calendars.ACCOUNT_TYPE, accountType); put(CalendarContract.Calendars.NAME, name); put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, "App: $name"); put(CalendarContract.Calendars.CALENDAR_COLOR, android.graphics.Color.BLUE); put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER); put(CalendarContract.Calendars.OWNER_ACCOUNT, accountName); put(CalendarContract.Calendars.SYNC_EVENTS, 1) }
+        val v = ContentValues().apply { put(CalendarContract.Calendars.ACCOUNT_NAME, accountName); put(CalendarContract.Calendars.ACCOUNT_TYPE, accountType); put(CalendarContract.Calendars.NAME, name); put(CalendarContract.Calendars.CALENDAR_DISPLAY_NAME, "App: $name"); put(CalendarContract.Calendars.CALENDAR_COLOR, android.graphics.Color.BLUE); put(CalendarContract.Calendars.CALENDAR_ACCESS_LEVEL, CalendarContract.Calendars.CAL_ACCESS_OWNER); put(CalendarContract.Calendars.OWNER_ACCOUNT, accountName); put(CalendarContract.Calendars.SYNC_EVENTS, 1); put(CalendarContract.Calendars.VISIBLE, 1) }
         val id = context.contentResolver.insert(asSyncAdapter(CalendarContract.Calendars.CONTENT_URI), v)?.lastPathSegment?.toLongOrNull()
         if (id != null) newCalendarsCreated.add(id); return id
     }
@@ -868,6 +868,16 @@ class SyncEngine(private val context: Context) {
     private fun asSyncAdapter(uri: Uri) = uri.buildUpon().appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true").appendQueryParameter(CalendarContract.Calendars.ACCOUNT_NAME, accountName).appendQueryParameter(CalendarContract.Calendars.ACCOUNT_TYPE, accountType).build()
     private fun deleteCalendar(name: String) { context.contentResolver.delete(asSyncAdapter(CalendarContract.Calendars.CONTENT_URI), "${CalendarContract.Calendars.ACCOUNT_NAME} = ? AND ${CalendarContract.Calendars.ACCOUNT_TYPE} = ? AND ${CalendarContract.Calendars.NAME} = ?", arrayOf(accountName, accountType, name)) }
     private fun sanitizeFilename(name: String): String { val res = Regex("[<>:\"/\\\\|?*]"); val s = res.replace(name, "-").trim().trimEnd('.'); return if (s.isEmpty()) "Untitled" else s }
+    
+    fun ensureAccountExists() {
+        val accountManager = android.accounts.AccountManager.get(context)
+        val account = android.accounts.Account(accountName, accountType)
+        if (accountManager.addAccountExplicitly(account, null, null)) {
+            android.content.ContentResolver.setIsSyncable(account, CalendarContract.AUTHORITY, 1)
+            android.content.ContentResolver.setSyncAutomatically(account, CalendarContract.AUTHORITY, true)
+            SyncLogger.log(context, "calendar", "Created MarkItHub Calendars sync account")
+        }
+    }
 }
 
 data class CalendarProviderEvent(val id: Long, val title: String, val dtStart: Long, val dtEnd: Long, val duration: String?, val description: String, val dirty: Boolean, val deleted: Boolean, val recurrenceRule: String?, val allDay: Boolean, val location: String?, val timezone: String?, val color: Int?, val attendees: List<String> = emptyList(), val reminders: List<Int> = emptyList())

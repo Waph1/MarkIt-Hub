@@ -10,17 +10,22 @@ MarkIt Hub scans your local folders for Markdown files containing event metadata
 *   **Two-Way Integration:** Displays your Markdown events in any calendar app on your phone. If you edit or delete an event in your calendar app, MarkIt Hub updates the corresponding `.md` file on your storage.
 *   **Folder-Based Organization:** Follows a clear structure: `/{CalendarName}/{YYYY}/{MM}/{YYYY-MM-DD}_{EventTitle}.md`.
 
+### 2. VCF ↔ Android Contacts Sync
+MarkIt Hub keeps your plain-text `.vcf` contact backup directory in perfect sync with your Android System Contacts.
+*   **Safe File Deletion:** If you delete a contact from Android, the `.vcf` file is removed.
+*   **Intelligent Syncing:** Uses a hashing system to verify if contacts have genuinely changed before modifying them, safely preserving your "Favorites" list and protecting against native Android contact merges.
+
 ### 2. MarkIt Notes Reminders
 It integrates deeply with **MarkIt Notes** by scanning your notes for the `reminder:` YAML key.
 *   **System Notifications:** Schedules exact system alarms based on note metadata.
 *   **Actionable Tasks:** Displays reminders as 10-minute "Task" events in your calendar.
 *   **Archiving Logic:** When you mark a task as completed in your calendar app (using the `[x]` prefix), MarkIt Hub automatically moves the source Markdown note to your `.Archive` folder.
 
-### 3. Privacy & Freedom
+### 4. Privacy & Freedom
 *   **No Cloud Required:** Your data stays in your folders. Use Syncthing, Obsidian, or Dropbox to sync the files to other devices; MarkIt Hub handles the local Android integration.
-*   **Open Format:** Everything is stored in standard Markdown and YAML. You are never locked into a proprietary database.
+*   **Open Format:** Everything is stored in standard Markdown, YAML, and VCF. You are never locked into a proprietary database.
 
-## Core Features (v0.2.0)
+## Core Features (v0.3.0)
 *   **Universal YAML Standard:** Implements a robust, quote-aware YAML structure compatible across the ecosystem.
     *   **Double-Entry Dates:** Automatically writes both `reminder:` (for MarkIt) and `start:` (for Standard) to ensure compatibility.
     *   **Smart Quoting:** All strings are safely quoted to handle special characters (e.g., `title: "Project: Kickoff"`).
@@ -38,6 +43,7 @@ MarkIt Hub treats your filesystem as the "Source of Truth" for content, and the 
 ### Directory Structure
 *   **Calendars:** Stored in `Root/{CalendarName}/{YYYY}/{MM}/{YYYY-MM-DD}_{Title}.md`.
 *   **Tasks:** Stored in `TaskRoot/Inbox/` (or subfolders). Moving a file to `.Archive` completes the task.
+*   **Contacts:** Stored generically as `ContactRoot/*.vcf` format.
 
 ### Universal YAML Format
 We use a flat, human-readable YAML frontmatter.
@@ -55,7 +61,7 @@ Markdown content remains untouched...
 ```
 
 ## Setup
-1.  **Install:** Download the `MarkIt-Hub-v0.2.0.apk` from the Releases page.
+1.  **Install:** Download the `MarkIt-Hub-v0.3.0.apk` from the Releases page.
 2.  **Permissions:** Follow the onboarding to grant Calendar and Notification access.
 3.  **Battery:** Disable battery optimization (essential for the background sync engine to work reliably).
 4.  **Folders:** Pick the folders where you store your Markdown calendars and MarkIt Notes.

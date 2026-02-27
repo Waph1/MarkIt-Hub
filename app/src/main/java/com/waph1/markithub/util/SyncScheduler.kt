@@ -1,38 +1,53 @@
 package com.waph1.markithub.util
 
 import android.content.Context
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.PeriodicWorkRequestBuilder
-import androidx.work.WorkManager
-import java.util.concurrent.TimeUnit
+import android.accounts.Account
+import android.content.ContentResolver
+import android.os.Bundle
+import android.provider.CalendarContract
+import android.provider.ContactsContract
 
 object SyncScheduler {
-    const val SYNC_WORK_NAME = "CalendarSyncWork"
+    private const val ACCOUNT_NAME_CALENDAR = "MarkItHub Calendars"
+    private const val ACCOUNT_TYPE_CALENDAR = "com.waph1.markithub.calendars"
+    private const val ACCOUNT_NAME_CONTACTS = "MarkItHub Contacts"
+    private const val ACCOUNT_TYPE_CONTACTS = "com.waph1.markithub.contacts"
 
     fun schedule(context: Context, minutes: Long) {
-        val workManager = WorkManager.getInstance(context)
+        val account = Account(ACCOUNT_NAME_CALENDAR, ACCOUNT_TYPE_CALENDAR)
+        val authority = CalendarContract.AUTHORITY
+
         if (minutes > 0) {
-            val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(minutes, TimeUnit.MINUTES)
-                .addTag(SYNC_WORK_NAME)
-                .build()
-            workManager.enqueueUniquePeriodicWork(
-                SYNC_WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
-                syncRequest
-            )
-            SyncLogger.log(context, "Periodic sync scheduled every $minutes minutes.")
+            val seconds = minutes * 60
+            ContentResolver.addPeriodicSync(account, authority, Bundle.EMPTY, seconds)
+            SyncLogger.log(context, "calendar", "System periodic calendar sync scheduled every $minutes minutes.")
         } else {
-            workManager.cancelUniqueWork(SYNC_WORK_NAME)
-            SyncLogger.log(context, "Periodic sync disabled.")
+            ContentResolver.removePeriodicSync(account, authority, Bundle.EMPTY)
+            SyncLogger.log(context, "calendar", "System periodic calendar sync disabled.")
+        }
+    }
+
+    fun scheduleContactsSync(context: Context, minutes: Long) {
+        val account = Account(ACCOUNT_NAME_CONTACTS, ACCOUNT_TYPE_CONTACTS)
+        val authority = ContactsContract.AUTHORITY
+
+        if (minutes > 0) {
+            val seconds = minutes * 60
+            ContentResolver.addPeriodicSync(account, authority, Bundle.EMPTY, seconds)
+            SyncLogger.log(context, "contacts", "System periodic contacts sync scheduled every $minutes minutes.")
+        } else {
+            ContentResolver.removePeriodicSync(account, authority, Bundle.EMPTY)
+            SyncLogger.log(context, "contacts", "System periodic contacts sync disabled.")
         }
     }
 
     fun stopAll(context: Context) {
-        val workManager = WorkManager.getInstance(context)
-        workManager.cancelUniqueWork(SYNC_WORK_NAME)
-        workManager.cancelAllWorkByTag(SYNC_WORK_NAME)
-        // Also cancel any one-time workers
-        workManager.cancelAllWork() 
-        SyncLogger.log(context, "All synchronization tasks stopped/cancelled.")
+        val calendarAccount = Account(ACCOUNT_NAME_CALENDAR, ACCOUNT_TYPE_CALENDAR)
+        val contactsAccount = Account(ACCOUNT_NAME_CONTACTS, ACCOUNT_TYPE_CONTACTS)
+        
+        ContentResolver.removePeriodicSync(calendarAccount, CalendarContract.AUTHORITY, Bundle.EMPTY)
+        ContentResolver.removePeriodicSync(contactsAccount, ContactsContract.AUTHORITY, Bundle.EMPTY)
+        
+        SyncLogger.log(context, "calendar", "All system synchronization tasks stopped.")
     }
 }

@@ -12,8 +12,8 @@ android {
         applicationId = "com.waph1.markithub"
         minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "0.2.3"
+        versionCode = 30
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -60,6 +60,7 @@ android {
 
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
     implementation("androidx.activity:activity-compose:1.8.1")
     implementation(platform("androidx.compose:compose-bom:2023.10.01"))
@@ -70,6 +71,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
     implementation("org.mnode.ical4j:ical4j:4.0.0-alpha10")
+    implementation("com.googlecode.ez-vcard:ez-vcard:0.12.1")
     
     // YAML Parsing
     implementation("org.snakeyaml:snakeyaml-engine:2.7")

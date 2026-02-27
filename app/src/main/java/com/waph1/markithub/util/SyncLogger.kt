@@ -1,23 +1,24 @@
 package com.waph1.markithub.util
 
 import android.content.Context
+import android.provider.DocumentsContract
+import android.net.Uri
 import java.io.File
 import java.io.IOException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 object SyncLogger {
-    private const val LOG_FILE_NAME = "sync_history.txt"
-    private const val MAX_LOG_SIZE = 10 * 1024 * 1024 // 10MB
+    private const val MAX_LOG_SIZE = 5 * 1024 * 1024 // 5MB per log
 
     @Synchronized
-    fun log(context: Context, message: String) {
-        val file = File(context.filesDir, LOG_FILE_NAME)
+    fun log(context: Context, logName: String, message: String) {
+        val fileName = "${logName}_history.txt"
+        val file = File(context.filesDir, fileName)
         val timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         val logEntry = "[$timestamp] $message\n"
 
         try {
-            // Check file size and rotate/trim if necessary (simple implementation: delete if too big)
             if (file.exists() && file.length() > MAX_LOG_SIZE) {
                 file.writeText("Log rotated due to size limit.\n")
             }
@@ -27,11 +28,12 @@ object SyncLogger {
         }
     }
 
-    fun getLogs(context: Context): List<String> {
-        val file = File(context.filesDir, LOG_FILE_NAME)
+    fun getLogs(context: Context, logName: String): List<String> {
+        val fileName = "${logName}_history.txt"
+        val file = File(context.filesDir, fileName)
         return if (file.exists()) {
             try {
-                file.readLines().reversed() // Show newest first
+                file.readLines().reversed()
             } catch (e: IOException) {
                 listOf("Error reading logs: ${e.message}")
             }
@@ -41,45 +43,45 @@ object SyncLogger {
     }
 
     @Synchronized
-    fun clearLogs(context: Context) {
-        val file = File(context.filesDir, LOG_FILE_NAME)
+    fun clearLogs(context: Context, logName: String) {
+        val fileName = "${logName}_history.txt"
+        val file = File(context.filesDir, fileName)
         if (file.exists()) {
             file.delete()
         }
     }
 
-    fun export(context: Context) {
-        val prefs = context.getSharedPreferences("MarkItHubPrefs", Context.MODE_PRIVATE)
-        val rootUriString = prefs.getString("rootUri", null) ?: return
-        val root = android.net.Uri.parse(rootUriString)
-        
+    fun export(context: Context, logName: String, rootUri: Uri) {
         try {
-            val logs = getLogs(context).joinToString("\n")
+            val logs = getLogs(context, logName).joinToString("\n")
             val resolver = context.contentResolver
+            val exportFileName = "${logName.capitalize()}Sync.log"
             
-            val rootId = android.provider.DocumentsContract.getTreeDocumentId(root)
-            val rootDocUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(root, rootId)
-            val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(root, rootId)
+            val rootId = DocumentsContract.getTreeDocumentId(rootUri)
+            val rootDocUri = DocumentsContract.buildDocumentUriUsingTree(rootUri, rootId)
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(rootUri, rootId)
             
-            var existingLogUri: android.net.Uri? = null
-            resolver.query(childrenUri, arrayOf(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
+            var existingLogUri: Uri? = null
+            resolver.query(childrenUri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { cursor ->
                 while (cursor.moveToNext()) {
-                    if (cursor.getString(1) == "Sync.log") {
-                        existingLogUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(root, cursor.getString(0))
+                    if (cursor.getString(1) == exportFileName) {
+                        existingLogUri = DocumentsContract.buildDocumentUriUsingTree(rootUri, cursor.getString(0))
                         break
                     }
                 }
             }
 
-            val targetUri = existingLogUri ?: android.provider.DocumentsContract.createDocument(resolver, rootDocUri, "text/plain", "Sync.log")
+            val targetUri = existingLogUri ?: DocumentsContract.createDocument(resolver, rootDocUri, "text/plain", exportFileName)
             targetUri?.let { uri ->
                 resolver.openOutputStream(uri, "wt")?.use { out ->
                     out.write(logs.toByteArray())
                 }
-                log(context, "Logs exported successfully to Sync.log")
+                log(context, logName, "Logs exported successfully to $exportFileName")
             }
         } catch (e: Exception) {
-            log(context, "Export failed: ${e.message}")
+            log(context, logName, "Export failed: ${e.message}")
         }
     }
 }
+
+private fun String.capitalize() = this.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }

@@ -42,6 +42,14 @@ object YamlConverter {
         }
     }
 
+    fun yamlToEvent(content: String): CalendarEvent? {
+        return try {
+            parseMarkdown(content, "unknown.md", "Default")
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun parseMarkdown(content: String, fileName: String, calendarName: String): CalendarEvent {
         val regex = Regex("""^---\s*\n(.*?)\n---\s*(?:\n(.*)|$)?$""", RegexOption.DOT_MATCHES_ALL)
         val matchResult = regex.find(content.trim())

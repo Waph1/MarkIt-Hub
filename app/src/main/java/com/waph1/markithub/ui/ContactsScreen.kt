@@ -6,32 +6,31 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.waph1.markithub.viewmodel.SyncViewModel
-import com.waph1.markithub.viewmodel.SyncStatus
+import com.waph1.markithub.viewmodel.ContactsViewModel
 import java.time.format.DateTimeFormatter
 
 @Composable
-fun SyncDashboardScreen(
-    viewModel: SyncViewModel = viewModel(),
-    onSelectRootFolder: () -> Unit,
-    onSelectTaskFolder: () -> Unit
+fun ContactsScreen(
+    viewModel: ContactsViewModel = viewModel(),
+    onSelectFolder: () -> Unit
 ) {
-    val syncStatus by viewModel.syncStatus.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
+    val folderUri by viewModel.contactsFolderUri.collectAsState()
+    val syncInterval by viewModel.syncInterval.collectAsState()
     val lastSyncTime by viewModel.lastSyncTime.collectAsState()
     val syncLogs by viewModel.syncLogs.collectAsState()
-    val rootFolder by viewModel.rootUri.collectAsState()
-    val taskFolder by viewModel.taskRootUri.collectAsState()
-    val syncInterval by viewModel.syncInterval.collectAsState()
     val themeColorLong by viewModel.themeColor.collectAsState()
     val themeColor = Color(themeColorLong)
     
@@ -46,7 +45,7 @@ fun SyncDashboardScreen(
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "Calendar Hub",
+                text = "Contacts Hub",
                 style = MaterialTheme.typography.headlineMedium,
                 color = themeColor,
                 modifier = Modifier.align(Alignment.Center)
@@ -60,7 +59,7 @@ fun SyncDashboardScreen(
                 }
             }
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
 
         Card(
@@ -73,33 +72,14 @@ fun SyncDashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Calendar Folder:", style = MaterialTheme.typography.labelMedium)
+                        Text(text = "VCF Folder:", style = MaterialTheme.typography.labelMedium)
                         Text(
-                            text = rootFolder?.path ?: "Not Selected", 
+                            text = folderUri?.path ?: "Not Selected", 
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }
-                    TextButton(onClick = onSelectRootFolder, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
-                        Text(if (rootFolder == null) "Select" else "Change")
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Tasks (MarkIt) Folder:", style = MaterialTheme.typography.labelMedium)
-                        Text(
-                            text = taskFolder?.path ?: "Not Selected", 
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                    TextButton(onClick = onSelectTaskFolder, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
-                        Text(if (taskFolder == null) "Select" else "Change")
+                    TextButton(onClick = onSelectFolder, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
+                        Text(if (folderUri == null) "Select" else "Change")
                     }
                 }
                 
@@ -111,13 +91,24 @@ fun SyncDashboardScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 
-                Text(text = "Sync Frequency:", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    text = if (syncInterval == 0L) "Manual" else "$syncInterval minutes", 
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(text = "Sync Frequency:", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            text = formatInterval(syncInterval), 
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    TextButton(onClick = { showSettings = true }, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
+                        Text("Change")
+                    }
+                }
             }
         }
 
@@ -130,7 +121,7 @@ fun SyncDashboardScreen(
         }
 
         if (showColorPicker) {
-            ColorPickerDialog(
+            ContactColorPickerDialog(
                 onDismiss = { showColorPicker = false },
                 onColorSelected = { 
                     viewModel.setThemeColor(it)
@@ -141,15 +132,18 @@ fun SyncDashboardScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        if (syncStatus is SyncStatus.Syncing) {
+        if (isSyncing) {
             CircularProgressIndicator(color = themeColor)
-            Text("Syncing...", modifier = Modifier.padding(top = 8.dp))
+            Text("Syncing Contacts...", modifier = Modifier.padding(top = 8.dp))
         } else {
             Button(
                 onClick = { viewModel.triggerSync() },
                 modifier = Modifier.fillMaxWidth(),
+                enabled = folderUri != null,
                 colors = ButtonDefaults.buttonColors(containerColor = themeColor)
             ) {
+                Icon(Icons.Default.Sync, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
                 Text("Sync Now")
             }
             
@@ -162,14 +156,14 @@ fun SyncDashboardScreen(
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
             ) {
-                Text("Nuke & Reset Calendars")
+                Text("Nuke MarkIt Contacts")
             }
             
             if (showNukeDialog) {
                 AlertDialog(
                     onDismissRequest = { showNukeDialog = false },
                     title = { Text("Danger Zone") },
-                    text = { Text("Delete all calendars created by this app? Markdown files will NOT be touched.") },
+                    text = { Text("Delete all contacts created by this app? VCF files will NOT be touched.") },
                     confirmButton = {
                         TextButton(onClick = {
                             viewModel.nukeAndReset()
@@ -190,7 +184,7 @@ fun SyncDashboardScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Calendar Logs", style = MaterialTheme.typography.titleMedium)
+            Text("Contacts Logs", style = MaterialTheme.typography.titleMedium)
             Row {
                 TextButton(onClick = { viewModel.exportLogs() }, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
                     Text("Export")
@@ -220,17 +214,17 @@ fun SyncDashboardScreen(
 }
 
 @Composable
-fun ColorPickerDialog(
+fun ContactColorPickerDialog(
     onDismiss: () -> Unit,
     onColorSelected: (Long) -> Unit
 ) {
     val colors = listOf(
-        0xFF2196F3 to "Blue",
-        0xFFF44336 to "Red",
-        0xFFFF9800 to "Orange",
-        0xFF9C27B0 to "Purple",
-        0xFF00BCD4 to "Cyan",
-        0xFF607D8B to "Grey"
+        0xFF4CAF50 to "Green",
+        0xFF2E7D32 to "Dark Green",
+        0xFF8BC34A to "Light Green",
+        0xFFCDDC39 to "Lime",
+        0xFF009688 to "Teal",
+        0xFF388E3C to "Forest"
     )
 
     AlertDialog(
@@ -257,4 +251,15 @@ fun ColorPickerDialog(
             TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
+}
+
+private fun formatInterval(minutes: Long): String {
+    return when {
+        minutes == 0L -> "Manual"
+        minutes < 60L -> "$minutes Minutes"
+        minutes == 60L -> "1 Hour"
+        minutes == 1440L -> "1 Day"
+        minutes % 1440L == 0L -> "${minutes / 1440L} Days"
+        else -> "$minutes Minutes"
+    }
 }
