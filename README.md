@@ -25,7 +25,7 @@ It integrates deeply with **MarkIt Notes** by scanning your notes for the `remin
 *   **No Cloud Required:** Your data stays in your folders. Use Syncthing, Obsidian, or Dropbox to sync the files to other devices; MarkIt Hub handles the local Android integration.
 *   **Open Format:** Everything is stored in standard Markdown, YAML, and VCF. You are never locked into a proprietary database.
 
-## Core Features (v0.3.0)
+## Core Features (v0.3.1)
 *   **Universal YAML Standard:** Implements a robust, quote-aware YAML structure compatible across the ecosystem.
     *   **Double-Entry Dates:** Automatically writes both `reminder:` (for MarkIt) and `start:` (for Standard) to ensure compatibility.
     *   **Smart Quoting:** All strings are safely quoted to handle special characters (e.g., `title: "Project: Kickoff"`).
@@ -61,7 +61,7 @@ Markdown content remains untouched...
 ```
 
 ## Setup
-1.  **Install:** Download the `MarkIt-Hub-v0.3.0.apk` from the Releases page.
+1.  **Install:** Download the `MarkIt-Hub-v0.3.1.apk` from the Releases page.
 2.  **Permissions:** Follow the onboarding to grant Calendar and Notification access.
 3.  **Battery:** Disable battery optimization (essential for the background sync engine to work reliably).
 4.  **Folders:** Pick the folders where you store your Markdown calendars and MarkIt Notes.

@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.3.1] - 2026-03-11
+
+### Fixed
+- Fixed an issue where synchronizing calendar events would inadvertently clear out the `body`, `metadata`, `tags`, `sourceUri` and `fileName` when merging dirty calendar provider changes.
+- Fixed an issue where the `YamlConverter` would write only `reminder` instead of both `reminder` and `start` as standard markdown expects during `toMarkdown()`.
+
 ## [v0.3.0] - 2026-02-27
 
 ### Added

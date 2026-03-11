@@ -159,11 +159,12 @@ object YamlConverter {
             append("color: \"#${String.format("%08X", colorInt).takeLast(8)}\"\n")
             
             // Universal Date: Use 'reminder' as primary key
-            event.start?.let {
-                val formattedDate = it.format(customFormatter)
-                append("reminder: \"$formattedDate\"\n")
-            }
-            event.end?.let { append("end: \"${it.format(customFormatter)}\"\n") }
+        event.start?.let {
+            val formattedDate = it.format(customFormatter)
+            append("reminder: \"$formattedDate\"\n")
+            append("start: \"$formattedDate\"\n")
+        }
+        event.end?.let { append("end: \"${it.format(customFormatter)}\"\n") }
             
             append("title: ${quoteValue(event.title)}\n")
             append("all_day: ${event.isAllDay}\n")

@@ -321,7 +321,7 @@ class SyncEngine(private val context: Context) {
 
                         SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Provider task dirty: ${pEvent.title}")
 
-                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating task file (both dirty/needs update): ${pEvent.title}"); saveTaskFile(providerEventToModel(pEvent, null, "Tasks"), null); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
+                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating task file (both dirty/needs update): ${pEvent.title}"); saveTaskFile(providerEventToModel(pEvent, fEvent.fileName, "Tasks").copy(body = fEvent.body, metadata = fEvent.metadata, tags = fEvent.tags, sourceUri = fEvent.sourceUri, fileName = fEvent.fileName), fEvent.fileName); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
 
                         else if (fEvent != null) mergeProviderChangesIntoFile(pEvent, fEvent, "Tasks", calendarId)
 
@@ -432,7 +432,7 @@ class SyncEngine(private val context: Context) {
                         if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Deleting file (provider marked deleted): ${fEvent.title}"); deleteFile(fEvent); deletions++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()) 
                     } else if (pEvent.dirty) {
                         SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Provider event dirty: ${pEvent.title}")
-                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating file (both dirty/needs update): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, null, calendarName)); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
+                        if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating file (both dirty/needs update): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, fEvent.fileName, calendarName).copy(body = fEvent.body, metadata = fEvent.metadata, tags = fEvent.tags, sourceUri = fEvent.sourceUri, fileName = fEvent.fileName)); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
                         else if (fEvent != null) mergeProviderChangesIntoFile(pEvent, fEvent, calendarName, calendarId)
                         else { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Saving new file from calendar (dirty): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, null, calendarName)) }
                         ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()); processed++
