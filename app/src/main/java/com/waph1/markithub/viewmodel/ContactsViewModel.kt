@@ -103,7 +103,7 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
                     
                     kotlinx.coroutines.delay(500)
                     var attempts = 0
-                    while ((android.content.ContentResolver.isSyncActive(account, android.provider.ContactsContract.AUTHORITY) || android.content.ContentResolver.isSyncPending(account, android.provider.ContactsContract.AUTHORITY)) && attempts < 45) {
+                    while ((android.content.ContentResolver.isSyncActive(account, android.provider.ContactsContract.AUTHORITY) || android.content.ContentResolver.isSyncPending(account, android.provider.ContactsContract.AUTHORITY)) && attempts < 120) {
                         refreshLogs()
                         kotlinx.coroutines.delay(1000)
                         attempts++

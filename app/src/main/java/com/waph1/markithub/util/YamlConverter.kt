@@ -30,7 +30,7 @@ object YamlConverter {
 
     fun hasRequiredMetadata(uri: Uri, context: Context): Boolean {
         return try {
-            val content = context.contentResolver.openInputStream(uri)?.use { reader -> reader.bufferedReader().readText() } ?: return false
+            val content = context.contentResolver.openFileDescriptor(uri, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { reader -> reader.bufferedReader().readText() } ?: return false
             val regex = Regex("""^---\s*\n(.*?)\n---\s*""", RegexOption.DOT_MATCHES_ALL)
             val matchResult = regex.find(content.trim()) ?: return false
             val yamlContent = matchResult.groups[1]?.value ?: return false

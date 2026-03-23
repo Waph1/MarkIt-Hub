@@ -135,7 +135,7 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
                     
                     kotlinx.coroutines.delay(500)
                     var attempts = 0
-                    while ((android.content.ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY) || android.content.ContentResolver.isSyncPending(account, CalendarContract.AUTHORITY)) && attempts < 45) {
+                    while ((android.content.ContentResolver.isSyncActive(account, CalendarContract.AUTHORITY) || android.content.ContentResolver.isSyncPending(account, CalendarContract.AUTHORITY)) && attempts < 120) {
                         refreshLogs()
                         kotlinx.coroutines.delay(1000)
                         attempts++

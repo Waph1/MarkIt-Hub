@@ -12,8 +12,8 @@ android {
         applicationId = "com.waph1.markithub"
         minSdk = 26
         targetSdk = 34
-        versionCode = 30
-        versionName = "0.3.1"
+        versionCode = 40
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -86,6 +86,8 @@ dependencies {
     kapt("androidx.room:room-compiler:$roomVersion")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("javax.cache:cache-api:1.1.1")
+    testImplementation("org.ehcache:ehcache:3.9.9")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.10.01"))

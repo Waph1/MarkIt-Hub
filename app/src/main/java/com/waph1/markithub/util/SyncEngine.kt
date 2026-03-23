@@ -111,6 +111,18 @@ class SyncEngine(private val context: Context) {
                     processed += res.eventsProcessed; deletions += res.deletions
                 }
 
+                // ── Post-sync file health repair pass ────────────────────────────────
+                // After all events are in sync, repair any misplaced, wrongly-named,
+                // or malformed .ics files. This is conservative: never deletes files.
+                if (rootFolder != null) {
+                    calendarEventsData.keys.forEach { name ->
+                        val calFolder = findDocumentInPath(rootFolder!!, name) ?: return@forEach
+                        getOrCreateCalendarId(name)?.let { id ->
+                            performRepairPass(name, id, calFolder, colorMap)
+                        }
+                    }
+                }
+
                 SyncLogger.log(context, "calendar", "Sync complete. Total processed: $processed, Total deletions: $deletions")
                 return@withContext SyncResult(processed, deletions)
             } catch (e: Exception) {
@@ -197,24 +209,30 @@ class SyncEngine(private val context: Context) {
             val currentRelPath = if (relativePath.isEmpty()) info.name else "$relativePath/${info.name}"
             val dbPath = "$calendarName/$currentRelPath"
             if (info.isDirectory && !info.name.startsWith(".")) scanFolderOptimized(calendarName, info.uri, map, newList, currentRelPath, foundPaths, seenIds)
-            else if (info.name.endsWith(".md") && !info.name.contains(".sync-conflict-")) {
+            else if (info.name.endsWith(".ics") && !info.name.contains(".sync-conflict-")) {
                 foundPaths.add(dbPath); val meta = dao.getMetadata(dbPath)
                 if (meta?.systemEventId != null && meta.lastModified == info.lastModified && !seenIds.contains(meta.systemEventId)) {
-                    seenIds.add(meta.systemEventId); map[meta.systemEventId] = CalendarEvent(title = info.name.substringBeforeLast(".md"), systemEventId = meta.systemEventId, fileName = dbPath, sourceUri = info.uri.toString(), calendarName = calendarName, needsUpdate = false)
+                    seenIds.add(meta.systemEventId); map[meta.systemEventId] = CalendarEvent(title = info.name.substringBeforeLast(".ics"), systemEventId = meta.systemEventId, fileName = dbPath, sourceUri = info.uri.toString(), calendarName = calendarName, needsUpdate = false)
                     SyncLogger.log(context, "calendar", "File skipped (unchanged): $dbPath")
                     return@forEach
                 }
                 SyncLogger.log(context, "calendar", "Parsing file: $dbPath (Modified: ${info.lastModified})")
                 parseFileOptimized(info.uri, info.name, calendarName, context)?.let { event ->
                     var finalEvent = event.copy(needsUpdate = true, fileName = dbPath, sourceUri = info.uri.toString())
-                    val fileNameWithoutExt = info.name.substringBeforeLast(".md")
+                    // Trust the SUMMARY from the ICS as the canonical title.
+                    // Only fall back to filename parsing if SUMMARY is blank (already handled in parseIcs).
+                    // Optionally correct the date from the filename prefix if it disagrees with DTSTART.
+                    val fileNameWithoutExt = info.name.substringBeforeLast(".ics")
                     val cleanName = fileNameWithoutExt.substringBefore("~") // Strip conflict suffix
-                    val datePart = cleanName.substringBefore("_", "")
-                    val expectedTitle = if (cleanName.contains("_")) cleanName.substringAfter("_").replace("_", " ") else cleanName.replace("_", " ")
-                    val parsedDate = try { LocalDate.parse(datePart) } catch (e: Exception) { null }
-                    if (finalEvent.title != expectedTitle) finalEvent = finalEvent.copy(title = expectedTitle, needsUpdate = true)
-                    if (parsedDate != null) { val start = finalEvent.start ?: LocalDateTime.now(); if (start.toLocalDate() != parsedDate) finalEvent = finalEvent.copy(start = parsedDate.atTime(start.toLocalTime()), needsUpdate = true) }
-                    if (!YamlConverter.hasRequiredMetadata(info.uri, context)) finalEvent = finalEvent.copy(needsUpdate = true)
+                    // Only try to extract a date prefix for non-recurring events (recurring have no date prefix)
+                    if (finalEvent.recurrenceRule == null) {
+                        val datePart = cleanName.substringBefore("_", "")
+                        val parsedDate = try { LocalDate.parse(datePart, java.time.format.DateTimeFormatter.BASIC_ISO_DATE) } catch (e: Exception) { try { LocalDate.parse(datePart) } catch (e2: Exception) { null } }
+                        if (parsedDate != null) {
+                            val start = finalEvent.start ?: LocalDateTime.now()
+                            if (start.toLocalDate() != parsedDate) finalEvent = finalEvent.copy(start = parsedDate.atTime(start.toLocalTime()), needsUpdate = true)
+                        }
+                    }
                     if (finalEvent.systemEventId != null && (seenIds.contains(finalEvent.systemEventId!!) || !verifyEventExists(finalEvent.systemEventId!!))) finalEvent = finalEvent.copy(systemEventId = null)
                     else if (finalEvent.systemEventId != null) seenIds.add(finalEvent.systemEventId!!)
                     if (finalEvent.systemEventId != null) { map[finalEvent.systemEventId!!] = finalEvent; dao.insert(com.waph1.markithub.repository.FileMetadata(dbPath, calendarName, info.lastModified, finalEvent.systemEventId)) }
@@ -259,12 +277,15 @@ class SyncEngine(private val context: Context) {
     }
 
     private fun parseFileOptimized(uri: Uri, fileName: String, calendarName: String, context: Context): CalendarEvent? {
-        return try { context.contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() }?.let { YamlConverter.parseMarkdown(it, fileName, calendarName) } } catch (e: Exception) { null }
+        return try {
+            val text = context.contentResolver.openFileDescriptor(uri, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { it.bufferedReader().readText() } ?: return null
+            IcsConverter.parseIcs(text, fileName, calendarName) // nullable: returns null on bad ICS
+        } catch (e: Exception) { null }
     }
 
     private fun parseTaskFileOptimized(uri: Uri, fileName: String, relativePath: String, context: Context): CalendarEvent? {
         return try {
-            val content = context.contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() } ?: return null
+            val content = context.contentResolver.openFileDescriptor(uri, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { it.bufferedReader().readText() } ?: return null
             if (!Regex("(?m)^(reminder|start):").containsMatchIn(content)) return null
             val event = YamlConverter.parseMarkdown(content, fileName, "Tasks")
             if (event.start == null) return null
@@ -311,11 +332,11 @@ class SyncEngine(private val context: Context) {
 
                     if (pEvent.title.startsWith("[x] ", true) || pEvent.title.startsWith("[X] ", true)) {
 
-                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Completing task: ${fEvent.title}"); completeTask(fEvent) }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++
+                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Completing task: ${fEvent.title}"); completeTask(ensureFullEvent(fEvent)) }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()); deletions++
 
                     } else if (pEvent.deleted) {
 
-                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Removing reminder from: ${fEvent.title}"); removeReminderFromFile(fEvent); processed++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build())
+                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Removing reminder from: ${fEvent.title}"); removeReminderFromFile(ensureFullEvent(fEvent)); processed++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build())
 
                     } else if (pEvent.dirty) {
 
@@ -351,67 +372,29 @@ class SyncEngine(private val context: Context) {
 
                 
 
-                        newFileEvents.forEach { rawEvent ->
-
-                
-
+                newFileEvents.forEach { rawEvent ->
                             currentOp++
-
-                
-
-                            val event = if (rawEvent.start == null) {
-
-                
-
-                                if (rawEvent.isAllDay) {
-
-                
-
-                                    val today = LocalDate.now()
-
-                
-
-                                    rawEvent.copy(start = today.atStartOfDay())
-
-                
-
-                                } else {
-
-                
-
-                                    rawEvent.copy(start = LocalDateTime.now())
-
-                
-
+                            // Guard: never stamp a task with the current time — if start is null
+                            // for a non-all-day task, skip it.
+                            val event = when {
+                                rawEvent.start != null -> rawEvent
+                                rawEvent.isAllDay -> rawEvent.copy(start = LocalDate.now().atStartOfDay())
+                                else -> {
+                                    SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Skipping new task with null start: ${rawEvent.title}")
+                                    return@forEach
                                 }
-
-                
-
-                            } else rawEvent
-
-                
-
+                            }
                             SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Syncing new file to Tasks: ${event.title}")
-
-                    insertProviderEvent(event, calendarId)?.let { newId -> 
-
-                        try {
-
-                            saveTaskFile(event.copy(systemEventId = newId), event.fileName)
-
-                            processed++
-
-                        } catch (e: Exception) {
-
-                            SyncLogger.log(context, "calendar", "Failed to create task, rolling back: ${e.message}");
-
-                            deleteProviderEvent(newId)
-
+                            insertProviderEvent(event, calendarId)?.let { newId ->
+                                try {
+                                    saveTaskFile(event.copy(systemEventId = newId), event.fileName)
+                                    processed++
+                                } catch (e: Exception) {
+                                    SyncLogger.log(context, "calendar", "Failed to create task, rolling back: ${e.message}")
+                                    deleteProviderEvent(newId)
+                                }
+                            }
                         }
-
-                    } 
-
-                }
 
                 return SyncResult(processed, deletions)
 
@@ -429,7 +412,7 @@ class SyncEngine(private val context: Context) {
                     SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Evaluating provider event: ${pEvent.title}")
                     
                     if (pEvent.deleted) { 
-                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Deleting file (provider marked deleted): ${fEvent.title}"); deleteFile(fEvent); deletions++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()) 
+                        if (fEvent != null) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Deleting file (provider marked deleted): ${fEvent.title}"); deleteFile(ensureFullEvent(fEvent)); deletions++ }; ops.add(ContentProviderOperation.newDelete(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).build()) 
                     } else if (pEvent.dirty) {
                         SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Provider event dirty: ${pEvent.title}")
                         if (fEvent != null && fEvent.needsUpdate) { SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Updating file (both dirty/needs update): ${pEvent.title}"); saveToFile(providerEventToModel(pEvent, fEvent.fileName, calendarName).copy(body = fEvent.body, metadata = fEvent.metadata, tags = fEvent.tags, sourceUri = fEvent.sourceUri, fileName = fEvent.fileName)); ops.add(ContentProviderOperation.newUpdate(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(id.toString()).build()).withValue(CalendarContract.Events.DIRTY, 0).build()) }
@@ -448,24 +431,26 @@ class SyncEngine(private val context: Context) {
                 
                         newFileEvents.forEach { rawEvent ->
                             currentOp++
-                            val event = if (rawEvent.start == null) {
-                                if (rawEvent.isAllDay) {
-                                    val today = LocalDate.now()
-                                    rawEvent.copy(start = today.atStartOfDay())
-                                } else {
-                                    rawEvent.copy(start = LocalDateTime.now())
+                            // Guard: never stamp an event with the current time — if start is null
+                            // for a non-all-day event, the ICS was unparseable; skip it.
+                            val event = when {
+                                rawEvent.start != null -> rawEvent
+                                rawEvent.isAllDay -> rawEvent.copy(start = LocalDate.now().atStartOfDay())
+                                else -> {
+                                    SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Skipping new event with null start (unparseable ICS): ${rawEvent.title}")
+                                    return@forEach
                                 }
-                            } else rawEvent
+                            }
                             SyncLogger.log(context, "calendar", "[$currentOp/$totalOps] Syncing new file to calendar: ${event.title}")
-                            insertProviderEvent(event, calendarId)?.let { newId -> 
+                            insertProviderEvent(event, calendarId)?.let { newId ->
                         try {
                             saveToFile(event.copy(systemEventId = newId))
-                            processed++ 
+                            processed++
                         } catch (e: Exception) {
-                            SyncLogger.log(context, "calendar", "Failed to create event file, rolling back: ${e.message}");
+                            SyncLogger.log(context, "calendar", "Failed to create event file, rolling back: ${e.message}")
                             deleteProviderEvent(newId)
                         }
-                    } 
+                    }
                 }
                 return SyncResult(processed, deletions)
             }
@@ -495,24 +480,37 @@ class SyncEngine(private val context: Context) {
         }
 
         try {
-            val content = context.contentResolver.openInputStream(fileUri)?.use { it.bufferedReader().readText() } ?: run {
+            val content = context.contentResolver.openFileDescriptor(fileUri, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { it.bufferedReader().readText() } ?: run {
                 SyncLogger.log(context, "calendar", "Could not read content for $originalFileName")
                 return
             }
-            val currentEvent = YamlConverter.parseMarkdown(content, originalFileName.split("/").last(), calendarName)
-            var updatedEvent = providerEventToModel(pEvent, originalFileName, calendarName).copy(body = currentEvent.body, metadata = currentEvent.metadata, tags = currentEvent.tags)
             
-            SyncLogger.log(context, "calendar", "Merging provider changes for ${pEvent.title}. Provider end: ${updatedEvent.end}, File end was: ${currentEvent.end}")
+            var updatedEvent: CalendarEvent
+
+            if (calendarName == "Tasks") {
+                val currentEvent = YamlConverter.parseMarkdown(content, originalFileName.split("/").last(), calendarName)
+                updatedEvent = providerEventToModel(pEvent, originalFileName, calendarName).copy(body = currentEvent.body, metadata = currentEvent.metadata, tags = currentEvent.tags)
+                updatedEvent = normalizeTask(updatedEvent)
+                context.contentResolver.update(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(pEvent.id.toString()).build(), eventToContentValues(updatedEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }, null, null) 
+            } else {
+                val currentEvent = IcsConverter.parseIcs(content, originalFileName.split("/").last(), calendarName) ?: CalendarEvent(title = pEvent.title)
+                updatedEvent = providerEventToModel(pEvent, originalFileName, calendarName).copy(body = currentEvent.body, metadata = currentEvent.metadata, tags = currentEvent.tags)
+            }
             
-            if (calendarName == "Tasks") { updatedEvent = normalizeTask(updatedEvent); context.contentResolver.update(asSyncAdapter(CalendarContract.Events.CONTENT_URI).buildUpon().appendPath(pEvent.id.toString()).build(), eventToContentValues(updatedEvent, calendarId).apply { put(CalendarContract.Events.DIRTY, 0) }, null, null) }
-            val start = updatedEvent.start ?: LocalDateTime.now(); val base = if (updatedEvent.recurrenceRule != null) sanitizeFilename(updatedEvent.title) else "${start.toLocalDate()}_${sanitizeFilename(updatedEvent.title)}"; val expected = "$base.md"; 
+            SyncLogger.log(context, "calendar", "Merging provider changes for ${pEvent.title}. Provider end: ${updatedEvent.end}")
+            
+            val start = updatedEvent.start ?: LocalDateTime.now(); 
+            val base = if (updatedEvent.recurrenceRule != null) sanitizeFilename(updatedEvent.title) 
+                       else "${start.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)}_${sanitizeFilename(updatedEvent.title)}"; 
+            val expectedFormat = if (calendarName == "Tasks") ".md" else ".ics"
+            val expected = "$base$expectedFormat";
             
             val calendarFolder = getOrCreateFolder(root, calendarName) ?: root
             val parentUri = findParentUri(root, path) ?: calendarFolder
             
             var uniqueName = expected
             if (expected != originalFileName.split("/").last()) {
-                 if (findDocumentInPath(parentUri, uniqueName) != null) { var c = 1; while (findDocumentInPath(parentUri, "$base ($c).md") != null) c++; uniqueName = "$base ($c).md" }
+                 if (findDocumentInPath(parentUri, uniqueName) != null) { var c = 1; while (findDocumentInPath(parentUri, "$base ($c)$expectedFormat") != null) c++; uniqueName = "$base ($c)$expectedFormat" }
             } else {
                 uniqueName = originalFileName.split("/").last()
             }
@@ -520,7 +518,8 @@ class SyncEngine(private val context: Context) {
             val finalFileName = if (originalFileName.contains("/")) originalFileName.substringBeforeLast("/") + "/" + uniqueName else "$calendarName/$uniqueName"
             
             // Atomic Write (replaces existing fileUri)
-            val newUri = safeWrite(parentUri, uniqueName, YamlConverter.toMarkdown(updatedEvent), fileUri)
+            val outputContent = if (calendarName == "Tasks") YamlConverter.toMarkdown(updatedEvent) else IcsConverter.toIcs(updatedEvent)
+            val newUri = safeWrite(parentUri, uniqueName, outputContent, fileUri)
             
             if (newUri != null) {
                  if (finalFileName != originalFileName) {
@@ -614,7 +613,7 @@ class SyncEngine(private val context: Context) {
     private suspend fun completeTask(event: CalendarEvent) {
         val root = taskRootFolder ?: return; val rel = event.fileName?.removePrefix("Tasks/") ?: return; val src = findDocumentInPath(root, rel) ?: return
         try {
-            val content = context.contentResolver.openInputStream(src)?.use { it.bufferedReader().readText() } ?: return; val archive = getOrCreateFolder(root, ".Archive") ?: return; var target = archive; val parts = rel.split("/")
+            val content = context.contentResolver.openFileDescriptor(src, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { it.bufferedReader().readText() } ?: return; val archive = getOrCreateFolder(root, ".Archive") ?: return; var target = archive; val parts = rel.split("/")
             for (i in 0 until parts.size - 1) target = getOrCreateFolder(target, parts[i]) ?: return
             DocumentsContract.createDocument(context.contentResolver, target, "text/markdown", parts.last())?.let { 
                 context.contentResolver.openOutputStream(it, "wt")?.use { out -> out.write(YamlConverter.removeCalendarData(content).toByteArray()) }
@@ -628,13 +627,16 @@ class SyncEngine(private val context: Context) {
 
     private suspend fun removeReminderFromFile(event: CalendarEvent) {
         val root = taskRootFolder ?: return; val path = event.fileName?.removePrefix("Tasks/") ?: return; val uri = findDocumentInPath(root, path) ?: return
-        try { val content = context.contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() } ?: return; context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(YamlConverter.removeCalendarData(content).toByteArray()) }; updateMetadataForFile(uri, event.fileName!!, "Tasks", null) } catch (e: Exception) {}
+        try { val content = context.contentResolver.openFileDescriptor(uri, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { it.bufferedReader().readText() } ?: return; context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(YamlConverter.removeCalendarData(content).toByteArray()) }; updateMetadataForFile(uri, event.fileName!!, "Tasks", null) } catch (e: Exception) {}
     }
 
     private suspend fun saveToFile(event: CalendarEvent) {
         val root = rootFolder ?: return; val folder = getOrCreateFolder(root, event.calendarName) ?: return; val start = event.start ?: LocalDateTime.now()
         val target = if (event.recurrenceRule != null) getOrCreateFolder(folder, "_Recurring") else { val yearF = getOrCreateFolder(folder, start.year.toString()); if (yearF != null) getOrCreateFolder(yearF, String.format("%02d", start.monthValue)) else null }
-        val targetFolder = target ?: return; val base = if (event.recurrenceRule != null) sanitizeFilename(event.title) else "${start.toLocalDate()}_${sanitizeFilename(event.title)}"; var expected = "$base.md"
+        val targetFolder = target ?: return; 
+        val base = if (event.recurrenceRule != null) sanitizeFilename(event.title) else "${start.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)}_${sanitizeFilename(event.title)}"; 
+        val expectedFormat = if (event.calendarName == "Tasks") ".md" else ".ics"
+        var expected = "$base$expectedFormat"
         val pathInCal = event.fileName?.removePrefix("${event.calendarName}/")
         
         var uri: Uri? = null
@@ -649,7 +651,7 @@ class SyncEngine(private val context: Context) {
         if (uri != null) {
             val currentParent = if (pathInCal != null) findParentUri(folder, pathInCal) else folder
             if (currentParent != targetFolder || expected != (pathInCal?.split("/")?.last() ?: "")) {
-                var unique = expected; if (findDocumentInPath(targetFolder, unique) != null && findDocumentInPath(targetFolder, unique) != uri) { var c = 1; while (findDocumentInPath(targetFolder, "$base ($c).md") != null) c++; unique = "$base ($c).md" }
+                var unique = expected; if (findDocumentInPath(targetFolder, unique) != null && findDocumentInPath(targetFolder, unique) != uri) { var c = 1; while (findDocumentInPath(targetFolder, "$base ($c)$expectedFormat") != null) c++; unique = "$base ($c)$expectedFormat" }
                 try {
                     val movedUri = if (currentParent != targetFolder) {
                         val m = DocumentsContract.moveDocument(context.contentResolver, uri, currentParent!!, targetFolder) 
@@ -669,18 +671,27 @@ class SyncEngine(private val context: Context) {
                     if (event.fileName != null) dao.delete(event.fileName!!)
                 } catch (e: Exception) { 
                     if (event.sourceUri == null) {
-                        uri = DocumentsContract.createDocument(context.contentResolver, targetFolder, "text/markdown", expected)
+                        uri = DocumentsContract.createDocument(context.contentResolver, targetFolder, "text/calendar", expected)
                         if (uri != null) invalidateCache(targetFolder)
                     }
                 }
             }
         } else {
-             uri = DocumentsContract.createDocument(context.contentResolver, targetFolder, "text/markdown", expected)
-             if (uri != null) invalidateCache(targetFolder)
+            val newUri = DocumentsContract.createDocument(context.contentResolver, targetFolder, "text/calendar", expected)
+            if (newUri != null) {
+                invalidateCache(targetFolder)
+                uri = newUri
+            }
         }
-        uri?.let { 
-            // SyncLogger.log(context, "calendar", "Writing to file: $it (expected: $expected)") // Commented out to avoid spam, uncomment if needed
-            context.contentResolver.openOutputStream(it, "wt")?.use { out -> out.write(YamlConverter.toMarkdown(event).toByteArray()) }; updateMetadataForFile(it, "${event.calendarName}/${if (event.recurrenceRule != null) "" else "${start.year}/${String.format("%02d", start.monthValue)}/"}$expected", event.calendarName, event.systemEventId) 
+        uri?.let {
+            context.contentResolver.openOutputStream(it, "wt")?.use { out -> out.write(IcsConverter.toIcs(event).toByteArray()) }
+            // Fix: recurring events live in _Recurring/, not in the calendar root.
+            // The metadata path must match what scanFolderOptimized will compute from the filesystem.
+            val subFolder = when {
+                event.recurrenceRule != null -> "_Recurring/"
+                else -> "${start.year}/${String.format("%02d", start.monthValue)}/"
+            }
+            updateMetadataForFile(it, "${event.calendarName}/$subFolder$expected", event.calendarName, event.systemEventId)
         }
     }
 
@@ -690,7 +701,7 @@ class SyncEngine(private val context: Context) {
         val pathInCal = event.fileName?.removePrefix("${event.calendarName}/") ?: ""
         val src = findDocumentInPath(target ?: return, pathInCal.split("/").last()) ?: return; val deleted = getOrCreateFolder(root, ".Deleted") ?: return
         try { 
-            context.contentResolver.openInputStream(src)?.use { input -> 
+            context.contentResolver.openFileDescriptor(src, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { input -> 
                 DocumentsContract.createDocument(context.contentResolver, deleted, "text/markdown", "${event.calendarName}_${System.currentTimeMillis()}_${pathInCal.replace("/", "_")}")?.let { 
                     context.contentResolver.openOutputStream(it)?.use { output -> input.copyTo(output) }
                     invalidateCache(deleted)
@@ -814,7 +825,7 @@ class SyncEngine(private val context: Context) {
         }
         if (event.recurrenceRule != null) { 
             val dur = Duration.between(start, event.end ?: start.plusHours(1))
-            values.put(CalendarContract.Events.DURATION, "P" + dur.toSeconds() + "S") 
+            values.put(CalendarContract.Events.DURATION, "P" + dur.seconds + "S") 
         } else { 
             values.put(CalendarContract.Events.DTEND, dtEnd) 
         }
@@ -862,6 +873,187 @@ class SyncEngine(private val context: Context) {
         } catch (e: Exception) {
             logError(e, "safeWrite for $fileName")
             return null
+        }
+    }
+
+    // ── File health repair pass ───────────────────────────────────────────────
+
+    /**
+     * Entry point for the post-sync repair pass for a single calendar.
+     * Loads provider events once, then delegates to [repairFolderRecursive].
+     */
+    private suspend fun performRepairPass(
+        calendarName: String,
+        calendarId: Long,
+        calendarFolderUri: Uri,
+        colorMap: Map<String, Int>
+    ) {
+        SyncLogger.log(context, "calendar", "Repair pass starting for '$calendarName'...")
+        val providerEvents = loadProviderEvents(calendarId, colorMap)
+        repairFolderRecursive(calendarName, calendarFolderUri, calendarFolderUri, "", providerEvents)
+        SyncLogger.log(context, "calendar", "Repair pass complete for '$calendarName'.")
+    }
+
+    /**
+     * Recursively scans [folderUri] (relative to [calendarRoot]) and repairs each .ics file:
+     * - If unparseable but has a known provider event → reconstructs valid ICS content
+     * - If parseable but in the wrong folder / filename → moves + renames, updates metadata
+     */
+    private suspend fun repairFolderRecursive(
+        calendarName: String,
+        calendarRoot: Uri,
+        folderUri: Uri,
+        relativePath: String,
+        providerEvents: Map<Long, CalendarProviderEvent>
+    ) {
+        listChildDocuments(folderUri).forEach { info ->
+            val currentRelPath = if (relativePath.isEmpty()) info.name else "$relativePath/${info.name}"
+            val dbPath = "$calendarName/$currentRelPath"
+
+            if (info.isDirectory && !info.name.startsWith(".")) {
+                repairFolderRecursive(calendarName, calendarRoot, info.uri, currentRelPath, providerEvents)
+                return@forEach
+            }
+            if (!info.name.endsWith(".ics") || info.name.contains(".sync-conflict-")) return@forEach
+
+            val content = try {
+                context.contentResolver.openFileDescriptor(info.uri, "r")?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it) }?.use { it.bufferedReader().readText() }
+            } catch (e: Exception) { null } ?: return@forEach
+
+            val parsed = IcsConverter.parseIcs(content, info.name, calendarName)
+
+            if (parsed == null) {
+                // If the file starts with valid ICS headers, it's structurally valid
+                // but ical4j may be rejecting it (e.g., VALUE parameter strictness).
+                // In that case, do NOT reconstruct — the file is fine, just not parseable by this build.
+                if (content.trimStart().startsWith("BEGIN:VCALENDAR")) {
+                    val errMsg = IcsConverter.lastParseError ?: "unknown"
+                    SyncLogger.log(context, "calendar", "Repair: skipping structurally-valid ICS that failed to parse ($errMsg): $dbPath")
+                    return@forEach
+                }
+
+                // Truly malformed ICS — reconstruct from provider if we know which event this was
+                val meta = dao.getMetadata(dbPath) ?: run {
+                    SyncLogger.log(context, "calendar", "Repair: malformed ICS with no DB entry, skipping: $dbPath")
+                    return@forEach
+                }
+                val sysId = meta.systemEventId ?: run {
+                    SyncLogger.log(context, "calendar", "Repair: malformed ICS has no systemEventId, skipping: $dbPath")
+                    return@forEach
+                }
+                val providerEvent = providerEvents[sysId] ?: run {
+                    SyncLogger.log(context, "calendar", "Repair: no provider event found for malformed ICS (id=$sysId), skipping: $dbPath")
+                    return@forEach
+                }
+                val reconstructed = providerEventToModel(providerEvent, dbPath, calendarName)
+                try {
+                    context.contentResolver.openOutputStream(info.uri, "wt")?.use {
+                        it.write(IcsConverter.toIcs(reconstructed).toByteArray())
+                    }
+                    updateMetadataForFile(info.uri, dbPath, calendarName, sysId)
+                    SyncLogger.log(context, "calendar", "Repair: reconstructed malformed ICS: $dbPath")
+                } catch (e: Exception) {
+                    logError(e, "repairFolderRecursive: reconstruct $dbPath")
+                }
+                return@forEach
+            }
+
+            // File parsed OK — check placement and name
+            val start = parsed.start ?: return@forEach  // no start → can’t compute expected path
+
+            val expectedSubFolder = if (parsed.recurrenceRule != null) "_Recurring"
+                                    else "${start.year}/${String.format("%02d", start.monthValue)}"
+            val expectedBase = if (parsed.recurrenceRule != null) sanitizeFilename(parsed.title)
+                               else "${start.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)}_${sanitizeFilename(parsed.title)}"
+            val expectedFileName = "$expectedBase.ics"
+            val expectedRelPath = "$expectedSubFolder/$expectedFileName"
+
+            // Tolerate conflict suffixes and timezone date-shifts in filename.
+            // The base name has the shape "YYYYMMDD_Title" (non-recurring) or "Title" (recurring).
+            // First check exact match, then fall back to tolerant matching.
+            if (currentRelPath == expectedRelPath) return@forEach  // exact match — no repair needed
+
+            // Strip counter suffix ("(1)") and date prefix before comparing the title portion.
+            val nameWithoutExt = info.name.substringBeforeLast(".ics")
+            val baseWithoutCounter = nameWithoutExt.replace(Regex(""" \(\d+\)$"""), "")
+
+            val expectedTitle = sanitizeFilename(parsed.title)
+            // Extract the title portion from the actual filename (strip the leading date_)
+            val actualTitle = if (parsed.recurrenceRule != null) baseWithoutCounter
+                              else baseWithoutCounter.substringAfter("_", baseWithoutCounter)
+
+            val titleMatches = actualTitle == expectedTitle
+
+            // For the subfolder: tolerate being in the right year/month structure even if
+            // the exact month differs by 1 (timezone drift at month boundary)
+            val actualSubFolder = if (relativePath.isEmpty()) "" else relativePath
+            val subFolderOK = actualSubFolder == expectedSubFolder || parsed.recurrenceRule != null ||
+                run {
+                    try {
+                        val actualParts = actualSubFolder.split("/")
+                        val expectedParts = expectedSubFolder.split("/")
+                        if (actualParts.size == 2 && expectedParts.size == 2) {
+                            val actualDate = java.time.LocalDate.of(actualParts[0].toInt(), actualParts[1].toInt(), 1)
+                            val expectedDate = java.time.LocalDate.of(expectedParts[0].toInt(), expectedParts[1].toInt(), 1)
+                            Math.abs(actualDate.until(expectedDate).toTotalMonths()) <= 1
+                        } else false
+                    } catch (e: Exception) { false }
+                }
+
+            if (titleMatches && subFolderOK) return@forEach  // close enough — don't repair
+
+            SyncLogger.log(context, "calendar", "Repair: $dbPath should be at $calendarName/$expectedRelPath")
+
+            // Build target folder URI (mirrors saveToFile logic)
+            val targetFolderUri: Uri? = if (parsed.recurrenceRule != null) {
+                getOrCreateFolder(calendarRoot, "_Recurring")
+            } else {
+                val yearFolder = getOrCreateFolder(calendarRoot, start.year.toString())
+                yearFolder?.let { getOrCreateFolder(it, String.format("%02d", start.monthValue)) }
+            }
+            if (targetFolderUri == null) {
+                SyncLogger.log(context, "calendar", "Repair: could not create target folder, skipping: $dbPath")
+                return@forEach
+            }
+
+            // Guard: don’t overwrite a different file already at the target path
+            val occupant = findDocumentInPath(targetFolderUri, expectedFileName)
+            if (occupant != null && occupant != info.uri) {
+                SyncLogger.log(context, "calendar", "Repair: target already occupied, skipping move of $dbPath")
+                return@forEach
+            }
+
+            try {
+                val currentParentUri = findParentUri(calendarRoot, currentRelPath) ?: calendarRoot
+
+                // Move to correct subfolder (if different)
+                val movedUri = if (currentParentUri != targetFolderUri) {
+                    DocumentsContract.moveDocument(
+                        context.contentResolver, info.uri, currentParentUri, targetFolderUri
+                    )?.also {
+                        invalidateCache(currentParentUri)
+                        invalidateCache(targetFolderUri)
+                    } ?: run {
+                        SyncLogger.log(context, "calendar", "Repair: move failed for $dbPath")
+                        return@forEach
+                    }
+                } else info.uri
+
+                // Rename if filename differs
+                val finalUri = if (info.name != expectedFileName) {
+                    DocumentsContract.renameDocument(context.contentResolver, movedUri, expectedFileName)
+                        ?.also { invalidateCache(targetFolderUri) }
+                        ?: movedUri  // rename failed but file was moved — keep it
+                } else movedUri
+
+                val newDbPath = "$calendarName/$expectedRelPath"
+                val sysId = parsed.systemEventId ?: dao.getMetadata(dbPath)?.systemEventId
+                if (dbPath != newDbPath) dao.delete(dbPath)
+                updateMetadataForFile(finalUri, newDbPath, calendarName, sysId)
+                SyncLogger.log(context, "calendar", "Repair: $dbPath → $newDbPath")
+            } catch (e: Exception) {
+                logError(e, "repairFolderRecursive: move/rename $dbPath")
+            }
         }
     }
 
