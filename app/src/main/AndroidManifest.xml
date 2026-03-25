@@ -84,7 +84,7 @@
             </intent-filter>
         </activity>
         
-        <receiver android:name=".receiver.SyncReceiver" android:exported="true">
+        <receiver android:name=".receiver.SyncReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="com.waph1.markithub.SYNC" />
                 <action android:name="com.waph1.markithub.SYNC_CONTACTS" />
