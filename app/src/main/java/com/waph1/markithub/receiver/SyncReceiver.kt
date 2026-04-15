@@ -17,6 +17,27 @@ import com.waph1.markithub.util.SyncEngine
 class SyncReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
+            "com.nutomic.syncthingandroid.action.STATE_CHANGED" -> {
+                val prefs = context.getSharedPreferences("MarkItHubPrefs", Context.MODE_PRIVATE)
+                val syncthingEnabled = prefs.getBoolean("enableSyncthing", true)
+                if (!syncthingEnabled) return
+                
+                val state = intent.getStringExtra("extra_state")
+                
+                if (state == "IDLE") {
+                    SyncLogger.log(context, "calendar", "Syncthing finished syncing. Triggering auto-sync...")
+                    val workManager = WorkManager.getInstance(context)
+                    val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>().build()
+                    workManager.enqueue(syncRequest)
+                    
+                    val account = Account("MarkItHub Contacts", "com.waph1.markithub.contacts")
+                    val extras = Bundle().apply {
+                        putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                        putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                    }
+                    ContentResolver.requestSync(account, ContactsContract.AUTHORITY, extras)
+                }
+            }
             "com.waph1.markithub.SYNC" -> {
                 SyncLogger.log(context, "calendar", "ADB Broadcast received: Starting Calendar Sync...")
                 val workManager = WorkManager.getInstance(context)

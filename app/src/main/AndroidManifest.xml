@@ -84,8 +84,9 @@
             </intent-filter>
         </activity>
         
-        <receiver android:name=".receiver.SyncReceiver" android:exported="false">
+        <receiver android:name=".receiver.SyncReceiver" android:exported="true">
             <intent-filter>
+                <action android:name="com.nutomic.syncthingandroid.action.STATE_CHANGED" />
                 <action android:name="com.waph1.markithub.SYNC" />
                 <action android:name="com.waph1.markithub.SYNC_CONTACTS" />
                 <action android:name="com.waph1.markithub.EXPORT_LOGS" />

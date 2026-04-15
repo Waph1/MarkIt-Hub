@@ -33,6 +33,9 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     private val _syncInterval = MutableStateFlow(prefs.getLong(KEY_CONTACTS_SYNC_INTERVAL, 1440L))
     val syncInterval: StateFlow<Long> = _syncInterval
 
+    private val _isSyncthingEnabled = MutableStateFlow(prefs.getBoolean("enableSyncthing", true))
+    val isSyncthingEnabled: StateFlow<Boolean> = _isSyncthingEnabled
+
     private val _themeColor = MutableStateFlow(0xFF4CAF50) // Default Green
     val themeColor: StateFlow<Long> = _themeColor
 
@@ -59,6 +62,14 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         _themeColor.value = prefs.getLong("contactsThemeColor", 0xFF4CAF50)
         prefs.registerOnSharedPreferenceChangeListener(preferenceChangeListener)
         refreshLogs()
+        
+        viewModelScope.launch {
+            SyncLogger.logUpdates.collect { updatedLogName ->
+                if (updatedLogName == LOG_NAME) {
+                    refreshLogs()
+                }
+            }
+        }
     }
 
     override fun onCleared() {
@@ -84,6 +95,12 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         prefs.edit().putLong(KEY_CONTACTS_SYNC_INTERVAL, minutes).apply()
         SyncScheduler.scheduleContactsSync(getApplication(), minutes)
         addLog("Contacts sync interval set to $minutes min")
+    }
+
+    fun setSyncthingEnabled(enabled: Boolean) {
+        _isSyncthingEnabled.value = enabled
+        prefs.edit().putBoolean("enableSyncthing", enabled).apply()
+        addLog("Syncthing integration set to ${if (enabled) "Enabled" else "Disabled"}")
     }
 
     fun triggerSync() {

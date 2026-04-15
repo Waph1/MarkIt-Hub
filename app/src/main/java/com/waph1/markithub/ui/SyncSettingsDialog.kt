@@ -13,11 +13,13 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun SyncSettingsDialog(
     currentInterval: Long,
+    isSyncthingEnabled: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (Long) -> Unit
+    onConfirm: (Long, Boolean) -> Unit
 ) {
     var customInterval by remember { mutableStateOf(if (currentInterval !in listOf(0L, 15L, 30L, 60L, 1440L)) currentInterval.toString() else "") }
     var selectedOption by remember { mutableStateOf(if (currentInterval in listOf(0L, 15L, 30L, 60L, 1440L)) currentInterval else -1L) }
+    var syncthingEnabled by remember { mutableStateOf(isSyncthingEnabled) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -83,6 +85,19 @@ fun SyncSettingsDialog(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                
+                Divider(modifier = Modifier.padding(vertical = 12.dp))
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Syncthing Auto-Trigger:", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = syncthingEnabled,
+                        onCheckedChange = { syncthingEnabled = it }
+                    )
+                }
             }
         },
         confirmButton = {
@@ -92,7 +107,7 @@ fun SyncSettingsDialog(
                 } else {
                     customInterval.toLongOrNull() ?: 15L
                 }
-                onConfirm(interval)
+                onConfirm(interval, syncthingEnabled)
                 onDismiss()
             }) {
                 Text("Save")

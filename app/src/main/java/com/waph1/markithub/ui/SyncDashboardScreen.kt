@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Palette
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -32,6 +33,7 @@ fun SyncDashboardScreen(
     val rootFolder by viewModel.rootUri.collectAsState()
     val taskFolder by viewModel.taskRootUri.collectAsState()
     val syncInterval by viewModel.syncInterval.collectAsState()
+    val isSyncthingEnabled by viewModel.isSyncthingEnabled.collectAsState()
     val themeColorLong by viewModel.themeColor.collectAsState()
     val themeColor = Color(themeColorLong)
     
@@ -124,8 +126,12 @@ fun SyncDashboardScreen(
         if (showSettings) {
             SyncSettingsDialog(
                 currentInterval = syncInterval,
+                isSyncthingEnabled = isSyncthingEnabled,
                 onDismiss = { showSettings = false },
-                onConfirm = { viewModel.setSyncInterval(it) }
+                onConfirm = { interval, syncthing -> 
+                    viewModel.setSyncInterval(interval)
+                    viewModel.setSyncthingEnabled(syncthing)
+                }
             )
         }
 
@@ -185,18 +191,37 @@ fun SyncDashboardScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
         
+        var showVerboseLogs by remember { mutableStateOf(false) }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("Calendar Logs", style = MaterialTheme.typography.titleMedium)
-            Row {
-                TextButton(onClick = { viewModel.exportLogs() }, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Verbose", style = MaterialTheme.typography.bodySmall)
+                Switch(
+                    checked = showVerboseLogs,
+                    onCheckedChange = { showVerboseLogs = it },
+                    modifier = Modifier.padding(horizontal = 4.dp).scale(0.8f)
+                )
+                TextButton(onClick = { viewModel.exportLogs() }, colors = ButtonDefaults.textButtonColors(contentColor = themeColor), contentPadding = PaddingValues(horizontal = 8.dp)) {
                     Text("Export")
                 }
-                TextButton(onClick = { viewModel.clearLogs() }, colors = ButtonDefaults.textButtonColors(contentColor = themeColor)) {
+                TextButton(onClick = { viewModel.clearLogs() }, colors = ButtonDefaults.textButtonColors(contentColor = themeColor), contentPadding = PaddingValues(horizontal = 8.dp)) {
                     Text("Clear")
+                }
+            }
+        }
+        
+        val filteredLogs = remember(syncLogs, showVerboseLogs) {
+            if (showVerboseLogs) {
+                syncLogs
+            } else {
+                val excludedKeywords = listOf("Evaluating", "Parsed", "Parsing", "Skipping", "skipped", "Merging", "Copying", "Cleaning", "Saving", "Updating", "Deleting", "Removing", "Provider event dirty", "Applying batch", "File missing", "Could not find file", "Could not read content")
+                syncLogs.filter { logLine ->
+                    excludedKeywords.none { keyword -> logLine.contains(keyword, ignoreCase = true) }
                 }
             }
         }
@@ -207,7 +232,7 @@ fun SyncDashboardScreen(
                 .weight(1f)
                 .padding(top = 8.dp)
         ) {
-            items(syncLogs) { log ->
+            items(filteredLogs) { log ->
                 Text(
                     text = log,
                     style = MaterialTheme.typography.bodySmall,

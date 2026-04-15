@@ -7,9 +7,14 @@ import java.io.File
 import java.io.IOException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 
 object SyncLogger {
     private const val MAX_LOG_SIZE = 5 * 1024 * 1024 // 5MB per log
+
+    private val _logUpdates = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val logUpdates: SharedFlow<String> = _logUpdates
 
     @Synchronized
     fun log(context: Context, logName: String, message: String) {
@@ -23,6 +28,7 @@ object SyncLogger {
                 file.writeText("Log rotated due to size limit.\n")
             }
             file.appendText(logEntry)
+            _logUpdates.tryEmit(logName)
         } catch (e: IOException) {
             e.printStackTrace()
         }
@@ -48,6 +54,7 @@ object SyncLogger {
         val file = File(context.filesDir, fileName)
         if (file.exists()) {
             file.delete()
+            _logUpdates.tryEmit(logName)
         }
     }
 

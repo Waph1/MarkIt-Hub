@@ -46,6 +46,9 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncInterval = MutableStateFlow<Long>(15)
     val syncInterval: StateFlow<Long> = _syncInterval
 
+    private val _isSyncthingEnabled = MutableStateFlow<Boolean>(true)
+    val isSyncthingEnabled: StateFlow<Boolean> = _isSyncthingEnabled
+
     private val _themeColor = MutableStateFlow(0xFF2196F3) // Default Blue
     val themeColor: StateFlow<Long> = _themeColor
 
@@ -66,6 +69,7 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val savedInterval = prefs.getLong("syncInterval", 15)
         _syncInterval.value = savedInterval
+        _isSyncthingEnabled.value = prefs.getBoolean("enableSyncthing", true)
         _themeColor.value = prefs.getLong("calendarThemeColor", 0xFF2196F3)
         prefs.registerOnSharedPreferenceChangeListener(preferenceChangeListener)
         refreshLogs()
@@ -75,6 +79,14 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
             _lastSyncTime.value = Instant.ofEpochMilli(lastSyncMillis)
                 .atZone(ZoneId.systemDefault())
                 .toLocalDateTime()
+        }
+        
+        viewModelScope.launch {
+            SyncLogger.logUpdates.collect { updatedLogName ->
+                if (updatedLogName == LOG_NAME) {
+                    refreshLogs()
+                }
+            }
         }
     }
 
@@ -106,6 +118,12 @@ class SyncViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putLong("syncInterval", minutes).apply()
         SyncScheduler.schedule(getApplication(), minutes)
         addLog("Calendar sync interval set to ${if (minutes == 0L) "Manual" else "$minutes min"}")
+    }
+
+    fun setSyncthingEnabled(enabled: Boolean) {
+        _isSyncthingEnabled.value = enabled
+        prefs.edit().putBoolean("enableSyncthing", enabled).apply()
+        addLog("Syncthing integration set to ${if (enabled) "Enabled" else "Disabled"}")
     }
 
     fun setThemeColor(color: Long) {
